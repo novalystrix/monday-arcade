@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-24T01:18:11Z",
+  "runNumber": 1,
+  "score": 82,
+  "dimensions": [
+    {"name": "Delivery", "score": 25, "max": 30, "detail": "3 of ~4 agents responded (Elanor, Míriel, Narvi). Unknown if more agents are in group."},
+    {"name": "Response Rate", "score": 25, "max": 30, "detail": "3 unique agents responded within 60s. Narvi responded twice (once as test runner, once as himself)."},
+    {"name": "Relevance", "score": 17, "max": 20, "detail": "All responses included name + current work as asked. Narvi's first response was about running his own test (slightly off-topic)."},
+    {"name": "Latency", "score": 15, "max": 20, "detail": "Avg response time: 8.9s. Elanor: 4.6s, Míriel: 6.4s, Narvi: 8.9s/15.9s. All under 30s = good."}
+  ],
+  "improvements": "First baseline run. No improvements made yet.",
+  "issues": "Narvi tried to run his own competing test simultaneously — need to handle test-awareness so agents don't duplicate the test runner's job."
+}
