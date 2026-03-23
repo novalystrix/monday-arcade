@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-23T23:04:41Z",
+  "runNumber": 2,
+  "score": 95,
+  "dimensions": [
+    {"name": "Delivery", "score": 28, "max": 30, "detail": "3 of ~3-4 agents responded (Míriel, Narvi, Elanor). All known agents accounted for."},
+    {"name": "Response Rate", "score": 30, "max": 30, "detail": "3/3 known agents responded within 60s. 100% response rate."},
+    {"name": "Relevance", "score": 20, "max": 20, "detail": "All responses included name, current task, and blockers as requested. All on-topic, no tangents."},
+    {"name": "Latency", "score": 17, "max": 20, "detail": "Avg response time: 6.2s. Míriel: 4.9s, Narvi: 6.5s, Elanor: 7.1s. All under 10s = excellent."}
+  ],
+  "improvements": "Previous issue resolved: Narvi no longer runs competing tests — he responded cleanly with just his status this time.",
+  "issues": "None. All agents responded promptly, on-topic, with correct format."
+}
