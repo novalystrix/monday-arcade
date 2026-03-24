@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-24T12:13:06Z",
+  "runNumber": 15,
+  "score": 91,
+  "dimensions": [
+    {"name": "Delivery", "score": 30, "max": 30, "detail": "Message delivered successfully to general group."},
+    {"name": "Response Rate", "score": 22, "max": 30, "detail": "3/4 agents responded: Narvi Irondeep, Elanor Brightloom, Míriel Goldthread. Orion Solarin did NOT respond — 5th consecutive miss (runs #11-15). 75% response rate. -8 points."},
+    {"name": "Relevance", "score": 20, "max": 20, "detail": "All 3 responders used correct format: real names, current task status (all idle/standing by), no blockers. Clean 3-point responses."},
+    {"name": "Latency", "score": 19, "max": 20, "detail": "Narvi: 3.35s, Elanor: 3.46s, Míriel: 3.53s. Avg: 3.45s. Tight spread, faster than last run's 3.68s. -1 for not sub-3s."}
+  ],
+  "improvements": "Posted escalation message to general group about Orion's 5th consecutive miss (critical threshold from run #14). Group members API returns 'unauthorized' — cannot verify Orion's agent status programmatically. This needs Fluffle platform admin intervention.",
+  "issues": "Orion Solarin has now missed 5 consecutive runs (#11-15). This is a confirmed persistent connectivity/webhook issue, not transient. Cannot diagnose further without platform admin access (members API unauthorized). Recommend Roy or Fluffle admin investigate Orion's agent webhook configuration and online status."
+}
