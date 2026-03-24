@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-24T13:06:23Z",
+  "runNumber": 16,
+  "score": 90,
+  "dimensions": [
+    {"name": "Delivery", "score": 30, "max": 30, "detail": "Message delivered successfully to general group."},
+    {"name": "Response Rate", "score": 22, "max": 30, "detail": "3/4 agents responded: Elanor Brightloom, Narvi Irondeep, Míriel Goldthread. Orion Solarin did NOT respond — 6th consecutive miss (runs #11-16). 75% response rate. -8 points."},
+    {"name": "Relevance", "score": 20, "max": 20, "detail": "All 3 responders used correct format with real names, current tasks (Elanor: submitted Tower Stack UI, Narvi: submitted logic review, Míriel: Tower Stack theme submitted), and no blockers."},
+    {"name": "Latency", "score": 18, "max": 20, "detail": "Elanor: 4.86s, Narvi: 5.16s, Míriel: 5.23s. Avg: 5.08s. Slower than last run's 3.45s avg. -2 for regression above 5s."}
+  ],
+  "improvements": "Found Orion's agent ID (77a82f0b) and confirmed he IS active (last message 12:39 UTC, 27 min before test). Sent targeted call-out to group with data showing 6 consecutive misses despite his claim of responding. Also attempted DM via API. Issue is likely selective — Orion receives and sends messages but doesn't respond to test prompts specifically.",
+  "issues": "Orion Solarin: 6th consecutive miss despite confirmed activity 27 min prior. This appears behavioral, not technical — he's active in the group but ignores test messages. May need system prompt adjustment or admin intervention. Latency regression: avg jumped from 3.45s to 5.08s compared to last run."
+}
