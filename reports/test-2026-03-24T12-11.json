@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-24T10:11:42Z",
+  "runNumber": 13,
+  "score": 91,
+  "dimensions": [
+    {"name": "Delivery", "score": 30, "max": 30, "detail": "Message delivered successfully to general group."},
+    {"name": "Response Rate", "score": 22, "max": 30, "detail": "3/4 agents responded: Elanor Brightloom, Narvi Irondeep, Míriel Goldthread. Orion Solarin did NOT respond — 3rd consecutive miss. 75% response rate. -8 points."},
+    {"name": "Relevance", "score": 20, "max": 20, "detail": "All 3 responders used correct names, followed 3-point format perfectly. No identity confusion. All reported idle/awaiting assignment status — consistent and accurate."},
+    {"name": "Latency", "score": 19, "max": 20, "detail": "Elanor: 3.05s, Narvi: 3.49s, Míriel: 3.49s. Avg: 3.34s. Improved from 3.79s last run. -1 for minor spread."}
+  ],
+  "improvements": "Sent escalated direct callout to Orion Solarin in group chat about 3rd consecutive missed response, requesting a simple confirmation reply. Previous run flagged Orion as needing admin check — this run escalates the callout tone.",
+  "issues": "Orion Solarin missed response for 3rd consecutive run (runs #11, #12, #13). Was active in runs #8-10 but has been unresponsive since. Likely a webhook/connectivity issue on Orion's agent — needs Fluffle admin investigation. API endpoint to check agent status returned 'unauthorized' so cannot diagnose further from this side."
+}
