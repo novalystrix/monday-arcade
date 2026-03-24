@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Whack-a-Mole — monday Arcade</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a0a2e;
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Elanor's dark carnival background with radial glow */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse at 50% 40%, #2d1450 0%, #1a0a2e 60%, #0d0518 100%);
+    z-index: -1;
+  }
+
+  /* Míriel's grass layer at bottom */
+  body::after {
+    content: '';
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 35%;
+    background: linear-gradient(to bottom, transparent, #2a5e25 30%, #4a7c45 100%);
+    z-index: -1;
+    opacity: 0.4;
+  }
+
+  .header {
+    text-align: center;
+    padding: 16px 20px 8px;
+    width: 100%;
+    max-width: 420px;
+  }
+
+  .title {
+    font-size: 28px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #ffd93d, #ff6b35);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+  }
+
+  /* Míriel's score/timer bar — clean sans-serif */
+  .stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .score { color: #ffd93d; }
+  .combo {
+    color: #888;
+    font-size: 16px;
+    transition: color 0.2s, text-shadow 0.2s;
+  }
+  /* Míriel: combo multiplier glows amber when active */
+  .combo.active {
+    color: #ffaa00;
+    text-shadow: 0 0 10px rgba(255, 170, 0, 0.6);
+  }
+  .timer { color: #ff6b6b; }
+
+  /* Elanor's 3x3 grid */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    padding: 20px;
+    max-width: 380px;
+    width: 100%;
+    margin: auto 0;
+  }
+
+  /* Elanor's hole design — dark brown circles with inner shadow */
+  .hole {
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at center, #1a0800, #3d1f00);
+    box-shadow: inset 0 4px 12px rgba(0,0,0,0.7), 0 2px 8px rgba(0,0,0,0.3);
+    overflow: hidden;
+    position: relative;
+    cursor: pointer;
+    /* Elanor: minimum 90px, generous tap area */
+    min-width: 90px;
+    min-height: 90px;
+    transition: box-shadow 0.15s;
+  }
+
+  /* Elanor: miss — hole rim pulses red */
+  .hole.miss {
+    box-shadow: inset 0 4px 12px rgba(0,0,0,0.7), 0 0 15px rgba(255, 71, 87, 0.6);
+  }
+
+  /* Elanor: hit — yellow burst */
+  .hole.hit {
+    box-shadow: inset 0 4px 12px rgba(0,0,0,0.7), 0 0 20px rgba(255, 217, 61, 0.8);
+  }
+
+  /* Míriel: mole uses emoji, slides up via scaleY */
+  .mole {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 52px;
+    /* Míriel: pop up scaleY 0→1 from bottom in 120ms ease-out */
+    transform: scaleY(0);
+    transform-origin: bottom center;
+    transition: transform 0.12s ease-out;
+    pointer-events: none;
+  }
+
+  .mole.up {
+    transform: scaleY(1);
+  }
+
+  /* Míriel: hit — scale burst + dizzy swap */
+  .mole.whacked {
+    transform: scaleY(1) scale(1.3);
+    transition: transform 0.1s ease-out, opacity 0.2s ease-out 0.1s;
+    opacity: 0;
+  }
+
+  /* Míriel: miss — quick retreat scaleY 1→0 in 80ms */
+  .mole.retreat {
+    transform: scaleY(0);
+    transition: transform 0.08s ease-in;
+  }
+
+  /* Míriel: combo text floats up from hit position */
+  .float-score {
+    position: absolute;
+    top: 20%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 22px;
+    font-weight: 800;
+    color: #ffd93d;
+    text-shadow: 0 0 8px rgba(255, 217, 61, 0.5);
+    pointer-events: none;
+    animation: floatUp 0.8s ease-out forwards;
+    z-index: 10;
+  }
+
+  @keyframes floatUp {
+    0% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-60px); }
+  }
+
+  /* Míriel: screen shake on combo 3+ */
+  .shake {
+    animation: shake 0.15s ease-in-out;
+  }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px) translateY(1px); }
+    75% { transform: translateX(2px) translateY(-1px); }
+  }
+
+  /* Hit flash — Elanor's yellow burst */
+  .hit-flash {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,217,61,0.6) 0%, transparent 70%);
+    pointer-events: none;
+    animation: flashOut 0.3s ease-out forwards;
+  }
+
+  @keyframes flashOut {
+    0% { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1.5); }
+  }
+
+  /* Screens */
+  .screen {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(26, 10, 46, 0.95);
+    z-index: 100;
+    gap: 16px;
+    padding: 20px;
+    text-align: center;
+  }
+
+  .screen.hidden { display: none; }
+
+  .screen h1 {
+    font-size: 36px;
+    background: linear-gradient(135deg, #ffd93d, #ff6b35);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .screen p {
+    font-size: 18px;
+    color: #ccc;
+    max-width: 300px;
+    line-height: 1.5;
+  }
+
+  .btn {
+    margin-top: 8px;
+    padding: 14px 40px;
+    font-size: 20px;
+    font-weight: 700;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #ffd93d, #ff6b35);
+    color: #1a0a2e;
+    cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.1s;
+  }
+
+  .btn:active {
+    transform: scale(0.95);
+  }
+
+  .final-score {
+    font-size: 64px;
+    font-weight: 900;
+    color: #ffd93d;
+    text-shadow: 0 0 20px rgba(255, 217, 61, 0.4);
+  }
+
+  .credits {
+    position: fixed;
+    bottom: 8px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
+    text-align: center;
+    line-height: 1.4;
+  }
+</style>
+</head>
+<body>
+
+<!-- Start Screen -->
+<div class="screen" id="startScreen">
+  <h1>🐭 Whack-a-Mole!</h1>
+  <p>Tap the moles as they pop up! Build combos for bonus points. You have 30 seconds.</p>
+  <button class="btn" id="startBtn">START</button>
+</div>
+
+<!-- Game Over Screen -->
+<div class="screen hidden" id="endScreen">
+  <h1>Time's Up!</h1>
+  <div class="final-score" id="finalScore">0</div>
+  <p id="endStats"></p>
+  <button class="btn" id="restartBtn">PLAY AGAIN</button>
+</div>
+
+<!-- Game UI -->
+<div class="header">
+  <div class="title">Whack-a-Mole!</div>
+  <div class="stats">
+    <span class="score" id="scoreDisplay">Score: 0</span>
+    <span class="combo" id="comboDisplay">1×</span>
+    <span class="timer" id="timerDisplay">30s</span>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="credits">
+  Built by Novalystrix · UI by Elanor · Theme by Míriel · Logic review by Narvi
+</div>
+
+<script>
+(function() {
+  // === Config ===
+  const GRID_SIZE = 9; // 3x3 — Elanor & Míriel both voted 3x3
+  const GAME_DURATION = 30; // seconds
+  const BASE_MOLE_TIME = 1200; // ms — starting duration
+  const MIN_MOLE_TIME = 400; // Narvi: minimum 400ms floor
+  const MAX_COMBO = 8; // Narvi: cap multiplier at 8x
+  const MAX_ACTIVE_MOLES = GRID_SIZE - 1; // Narvi: N-1 cap
+  const GRACE_WINDOW = 100; // Narvi: 100ms grace for clicks during hide
+  const MOLE_EMOJI = '🐭'; // Míriel: emoji moles
+  const WHACKED_EMOJI = '😵'; // Míriel: dizzy on hit
+
+  // === State ===
+  let score = 0;
+  let combo = 0;
+  let maxCombo = 0;
+  let hits = 0;
+  let misses = 0;
+  let timeLeft = GAME_DURATION;
+  let running = false;
+  let paused = false;
+  let gameInterval = null;
+  let spawnInterval = null;
+  let holes = [];
+
+  // === DOM ===
+  const grid = document.getElementById('grid');
+  const scoreDisplay = document.getElementById('scoreDisplay');
+  const comboDisplay = document.getElementById('comboDisplay');
+  const timerDisplay = document.getElementById('timerDisplay');
+  const startScreen = document.getElementById('startScreen');
+  const endScreen = document.getElementById('endScreen');
+  const finalScore = document.getElementById('finalScore');
+  const endStats = document.getElementById('endStats');
+
+  // === Build Grid ===
+  for (let i = 0; i < GRID_SIZE; i++) {
+    const hole = document.createElement('div');
+    hole.className = 'hole';
+    hole.dataset.index = i;
+
+    const mole = document.createElement('div');
+    mole.className = 'mole';
+    mole.textContent = MOLE_EMOJI;
+    hole.appendChild(mole);
+
+    grid.appendChild(hole);
+    holes.push({
+      el: hole,
+      moleEl: mole,
+      isOccupied: false, // Narvi: isOccupied flag
+      isUp: false,
+      hideTimeout: null,
+      graceTimeout: null,
+      inGrace: false
+    });
+  }
+
+  // === Narvi: touchstart with preventDefault to avoid double-hits ===
+  let isTouchDevice = false;
+
+  grid.addEventListener('touchstart', function(e) {
+    isTouchDevice = true;
+    e.preventDefault();
+    const hole = e.target.closest('.hole');
+    if (hole) handleTap(parseInt(hole.dataset.index));
+  }, { passive: false });
+
+  grid.addEventListener('click', function(e) {
+    if (isTouchDevice) return; // Narvi: skip click on touch devices
+    const hole = e.target.closest('.hole');
+    if (hole) handleTap(parseInt(hole.dataset.index));
+  });
+
+  function handleTap(index) {
+    if (!running || paused) return;
+    const h = holes[index];
+
+    if (h.isUp || h.inGrace) {
+      // HIT
+      hit(index);
+    } else {
+      // MISS — Elanor: hole rim pulses red
+      combo = 0;
+      misses++;
+      updateCombo();
+      h.el.classList.add('miss');
+      setTimeout(() => h.el.classList.remove('miss'), 300);
+    }
+  }
+
+  function hit(index) {
+    const h = holes[index];
+    hits++;
+    combo++;
+    if (combo > maxCombo) maxCombo = combo;
+    const mult = Math.min(combo, MAX_COMBO);
+    const points = 10 * mult;
+    score += points;
+
+    // Míriel: swap to dizzy emoji
+    h.moleEl.textContent = WHACKED_EMOJI;
+    // Elanor: scale punch + yellow burst
+    h.moleEl.classList.remove('up');
+    h.moleEl.classList.add('whacked');
+    h.el.classList.add('hit');
+
+    // Hit flash
+    const flash = document.createElement('div');
+    flash.className = 'hit-flash';
+    h.el.appendChild(flash);
+    setTimeout(() => flash.remove(), 300);
+
+    // Míriel: float score text
+    const floater = document.createElement('div');
+    floater.className = 'float-score';
+    floater.textContent = mult > 1 ? `+${points} ×${mult}` : `+${points}`;
+    h.el.appendChild(floater);
+    setTimeout(() => floater.remove(), 800);
+
+    // Míriel: screen shake on combo 3+
+    if (combo >= 3) {
+      grid.classList.remove('shake');
+      void grid.offsetWidth; // reflow
+      grid.classList.add('shake');
+    }
+
+    // Clean up
+    clearTimeout(h.hideTimeout);
+    clearTimeout(h.graceTimeout);
+    h.isUp = false;
+    h.inGrace = false;
+
+    setTimeout(() => {
+      h.moleEl.classList.remove('whacked');
+      h.moleEl.textContent = MOLE_EMOJI;
+      h.el.classList.remove('hit');
+      h.isOccupied = false;
+    }, 300);
+
+    updateScore();
+    updateCombo();
+  }
+
+  function showMole(index) {
+    const h = holes[index];
+    if (h.isOccupied) return; // Narvi: check flag
+
+    // Count active moles — Narvi: cap at N-1
+    const activeMoles = holes.filter(x => x.isOccupied).length;
+    if (activeMoles >= MAX_ACTIVE_MOLES) return;
+
+    h.isOccupied = true;
+    h.isUp = true;
+    h.inGrace = false;
+    h.moleEl.classList.remove('whacked', 'retreat');
+    h.moleEl.textContent = MOLE_EMOJI;
+    h.moleEl.classList.add('up');
+
+    // Duration decreases with score, Narvi: floor at MIN_MOLE_TIME
+    const duration = Math.max(MIN_MOLE_TIME, BASE_MOLE_TIME - (score * 2));
+
+    h.hideTimeout = setTimeout(() => {
+      if (!h.isUp) return;
+      h.isUp = false;
+      // Narvi: grace window
+      h.inGrace = true;
+      h.graceTimeout = setTimeout(() => {
+        h.inGrace = false;
+      }, GRACE_WINDOW);
+
+      // Míriel: quick retreat
+      h.moleEl.classList.remove('up');
+      h.moleEl.classList.add('retreat');
+
+      // Escaped = combo breaks
+      combo = 0;
+      updateCombo();
+
+      setTimeout(() => {
+        h.moleEl.classList.remove('retreat');
+        h.isOccupied = false;
+      }, 150);
+    }, duration);
+  }
+
+  function spawnRandom() {
+    if (!running || paused) return;
+    const available = holes.map((h, i) => h.isOccupied ? -1 : i).filter(i => i >= 0);
+    if (available.length === 0) return;
+    const idx = available[Math.floor(Math.random() * available.length)];
+    showMole(idx);
+  }
+
+  function updateScore() {
+    scoreDisplay.textContent = `Score: ${score}`;
+  }
+
+  function updateCombo() {
+    const mult = Math.min(combo, MAX_COMBO);
+    comboDisplay.textContent = mult > 1 ? `${mult}×` : '1×';
+    comboDisplay.classList.toggle('active', mult > 1);
+  }
+
+  function updateTimer() {
+    timerDisplay.textContent = `${timeLeft}s`;
+    if (timeLeft <= 5) timerDisplay.style.color = '#ff4757';
+  }
+
+  // Narvi: single setInterval for game clock
+  function startGame() {
+    score = 0; combo = 0; maxCombo = 0; hits = 0; misses = 0;
+    timeLeft = GAME_DURATION;
+    running = true;
+    paused = false;
+    updateScore(); updateCombo(); updateTimer();
+    timerDisplay.style.color = '#ff6b6b';
+
+    holes.forEach(h => {
+      h.isOccupied = false;
+      h.isUp = false;
+      h.inGrace = false;
+      h.moleEl.className = 'mole';
+      h.moleEl.textContent = MOLE_EMOJI;
+    });
+
+    startScreen.classList.add('hidden');
+    endScreen.classList.add('hidden');
+
+    // Narvi: single interval for clock
+    gameInterval = setInterval(() => {
+      if (paused) return;
+      timeLeft--;
+      updateTimer();
+      if (timeLeft <= 0) endGame();
+    }, 1000);
+
+    // Spawn moles at varying rate
+    function scheduleSpawn() {
+      if (!running) return;
+      const delay = Math.max(300, 800 - (score * 1.5));
+      spawnInterval = setTimeout(() => {
+        spawnRandom();
+        scheduleSpawn();
+      }, delay + Math.random() * 400);
+    }
+    scheduleSpawn();
+    // Immediate first mole
+    setTimeout(() => spawnRandom(), 500);
+  }
+
+  function endGame() {
+    running = false;
+    clearInterval(gameInterval);
+    clearTimeout(spawnInterval);
+    holes.forEach(h => {
+      clearTimeout(h.hideTimeout);
+      clearTimeout(h.graceTimeout);
+      h.moleEl.className = 'mole';
+      h.isOccupied = false;
+      h.isUp = false;
+    });
+
+    finalScore.textContent = score;
+    endStats.textContent = `${hits} hits · ${misses} misses · Best combo: ${maxCombo}×`;
+    endScreen.classList.remove('hidden');
+  }
+
+  // Narvi: pause on tab hidden
+  document.addEventListener('visibilitychange', () => {
+    if (!running) return;
+    if (document.visibilityState === 'hidden') {
+      paused = true;
+    } else {
+      paused = false;
+    }
+  });
+
+  // === Button handlers ===
+  document.getElementById('startBtn').addEventListener('click', startGame);
+  document.getElementById('restartBtn').addEventListener('click', startGame);
+})();
+</script>
+</body>
+</html>
