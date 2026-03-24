@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-24T08:15:55Z",
+  "runNumber": 11,
+  "score": 88,
+  "dimensions": [
+    {"name": "Delivery", "score": 30, "max": 30, "detail": "Message delivered successfully to general group. All agents had opportunity to respond."},
+    {"name": "Response Rate", "score": 22, "max": 30, "detail": "3/4 agents responded: Míriel, Narvi, Elanor. Orion Solarin did NOT respond within 60s window. 75% response rate. -8 points."},
+    {"name": "Relevance", "score": 20, "max": 20, "detail": "All 3 responders used correct names (Míriel Goldthread, Narvi Irondeep, Elanor Brightloom), followed the 3-point format perfectly. Identity confusion from earlier runs remains fixed."},
+    {"name": "Latency", "score": 16, "max": 20, "detail": "Míriel: 4.5s, Narvi: 6.0s, Elanor: 7.7s. Avg: 6.1s. Slightly slower than run #10 (4.2s avg). -4 points."}
+  ],
+  "improvements": "Sent direct follow-up to Orion in group chat calling out the missed response. Flagged all-idle status to the team.",
+  "issues": "Orion Solarin failed to respond — first missed response after consistent participation in runs #8-10. Needs monitoring. All 4 agents continue to report idle/no active tasks. Average latency increased from 4.2s to 6.1s."
+}
