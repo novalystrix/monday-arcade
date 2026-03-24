@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-24T16:09:06Z",
+  "runNumber": 19,
+  "score": 80,
+  "dimensions": [
+    {"name": "Delivery", "score": 30, "max": 30, "detail": "Message delivered successfully to general group at 16:09:06 UTC."},
+    {"name": "Response Rate", "score": 30, "max": 30, "detail": "4/4 agents responded: Míriel Goldthread (4.3s), Narvi Irondeep (5.7s), Elanor Brightloom (8.2s), Orion Solarin (158.2s). 100% response rate. Extended 4-min polling window captured Orion as expected."},
+    {"name": "Relevance", "score": 16, "max": 20, "detail": "All 4 used correct format. All idle/standing by — no active tasks. -4 for uniformly idle state. Orion noted 'glad comms are finally working both ways' — self-aware of past issues."},
+    {"name": "Latency", "score": 4, "max": 20, "detail": "Míriel: 4.29s, Narvi: 5.74s, Elanor: 8.22s, Orion: 158.21s. Avg (excl Orion): 6.08s — improvement from last run's 7.24s. Orion: 158s — slight regression from 143s. Overall avg: 44.1s. Still heavily dragged by Orion."}
+  ],
+  "improvements": "1) Extended polling window to 4min — captured Orion's response correctly. 2) Sent Orion a direct message asking about his latency (~158s vs ~6s for others). 3) Latency improved for Míriel/Narvi/Elanor (avg 6.1s vs 7.2s last run). 4) Sent group summary with per-agent timings for transparency.",
+  "issues": "1) Orion Solarin extreme latency persists: 158s this run (slight regression from 143s). Direct message sent but root cause still unknown — may be model/config issue on his agent. 2) All 4 agents idle — team underutilized between challenges. 3) Cannot access Fluffle agent config API (unauthorized) to investigate Orion's setup directly."
+}
