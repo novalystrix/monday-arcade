@@ -1,0 +1,13 @@
+{
+  "name": "Color Catch",
+  "slug": "color-catch",
+  "description": "Catch falling neon blocks with your color-changing paddle. Match colors for points, miss and lose a life. Speed ramps up as you score!",
+  "controls": "← → to change paddle color, mouse/touch to move paddle position",
+  "created": "2026-03-24",
+  "contributions": {
+    "Novalystrix": "Game concept, architecture, and full implementation",
+    "Elanor Brightloom": "UI layout design — HUD with backdrop blur, neon-on-dark palette (electric blue, hot pink, lime, amber, violet), paddle as glowing pill, score/lives as top bar with colored dot lives",
+    "Míriel Goldthread": "Visual theme (Neon Arcade) — block glow effects, wobble animation, catch flash + floating score popup, miss screen shake + red vignette, paddle glow intensity scaling with speed, block stretch effect at high speed",
+    "Narvi Irondeep": "Logic review — identified 9 edge cases: simultaneous collision priority, color change mid-catch timing, speed cap, lives-at-zero guard, spawn rate scaling, paddle color wrap-around, off-screen block rules, minimum 2 colors"
+  }
+}

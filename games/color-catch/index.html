@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Color Catch — monday.com Arcade</title>
+<style>
+  /* Elanor: neon-on-dark, no-scroll canvas, HUD with backdrop blur */
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    overflow: hidden;
+    background: #0a0a1a; /* Míriel: dark neon arcade bg */
+    font-family: 'Space Mono', monospace;
+    color: #fff;
+    touch-action: none;
+  }
+
+  canvas { display: block; }
+
+  /* Elanor: fixed top HUD bar */
+  .hud {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 24px;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    font: 700 1.1rem 'Space Mono', monospace;
+    color: #fff;
+    z-index: 10;
+  }
+  .hud-left { display: flex; align-items: center; gap: 8px; }
+  .hud-center { font-size: 0.8rem; opacity: 0.5; }
+  .hud-right { display: flex; align-items: center; gap: 6px; }
+
+  /* Elanor: lives as colored dots */
+  .life-dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #ff2d78;
+    box-shadow: 0 0 8px #ff2d78;
+    transition: opacity 0.3s;
+  }
+  .life-dot.lost { opacity: 0.15; box-shadow: none; }
+
+  /* Floating score popup — Míriel */
+  .score-popup {
+    position: fixed;
+    font: 700 1.5rem 'Space Mono', monospace;
+    pointer-events: none;
+    z-index: 20;
+    animation: floatUp 0.8s ease-out forwards;
+  }
+  @keyframes floatUp {
+    0% { opacity: 1; transform: translateY(0) scale(1.2); }
+    100% { opacity: 0; transform: translateY(-60px) scale(0.8); }
+  }
+
+  /* Míriel: screen shake */
+  .shake { animation: shakeAnim 0.3s ease-out; }
+  @keyframes shakeAnim {
+    0%, 100% { transform: translate(0); }
+    20% { transform: translate(-4px, 2px); }
+    40% { transform: translate(4px, -2px); }
+    60% { transform: translate(-2px, 4px); }
+    80% { transform: translate(2px, -4px); }
+  }
+
+  /* Míriel: red vignette flash on miss */
+  .vignette {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.15s;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(255,30,30,0.4) 100%);
+  }
+  .vignette.flash { opacity: 1; }
+
+  /* Game over overlay */
+  .overlay {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.85);
+    z-index: 30;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s;
+  }
+  .overlay.show { opacity: 1; pointer-events: auto; }
+  .overlay h1 { font-size: 3rem; margin-bottom: 12px; }
+  .overlay .final-score { font-size: 1.5rem; opacity: 0.7; margin-bottom: 32px; }
+  .overlay button {
+    font: 700 1rem 'Space Mono', monospace;
+    padding: 14px 36px;
+    border: 2px solid #fff;
+    background: transparent;
+    color: #fff;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .overlay button:hover { background: #fff; color: #0a0a1a; }
+
+  /* Start screen */
+  .start-screen {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: #0a0a1a;
+    z-index: 30;
+  }
+  .start-screen h1 { font-size: 2.5rem; margin-bottom: 8px; }
+  .start-screen .subtitle { opacity: 0.5; font-size: 0.85rem; margin-bottom: 6px; }
+  .start-screen .credits { opacity: 0.35; font-size: 0.7rem; margin-bottom: 32px; text-align: center; line-height: 1.6; }
+  .start-screen .controls { opacity: 0.5; font-size: 0.75rem; margin-bottom: 24px; text-align: center; line-height: 1.8; }
+  .start-screen button {
+    font: 700 1.1rem 'Space Mono', monospace;
+    padding: 16px 48px;
+    border: 2px solid #39ff14;
+    background: transparent;
+    color: #39ff14;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 0 20px rgba(57,255,20,0.2);
+  }
+  .start-screen button:hover { background: #39ff14; color: #0a0a1a; }
+
+  /* Color indicator in HUD */
+  .color-indicator {
+    width: 20px; height: 20px; border-radius: 4px;
+    margin-right: 8px;
+    transition: background 0.1s, box-shadow 0.1s;
+  }
+</style>
+</head>
+<body>
+
+<div class="vignette" id="vignette"></div>
+
+<div class="hud" id="hud" style="display:none">
+  <div class="hud-left">
+    <div class="color-indicator" id="colorIndicator"></div>
+    <span>SCORE: <span id="scoreDisplay">0</span></span>
+  </div>
+  <div class="hud-center">← → change color</div>
+  <div class="hud-right" id="livesContainer"></div>
+</div>
+
+<canvas id="game"></canvas>
+
+<div class="start-screen" id="startScreen">
+  <h1>🎮 Color Catch</h1>
+  <div class="subtitle">Match colors. Catch blocks. Don't miss.</div>
+  <div class="credits">
+    Built by Novalystrix · UI by Elanor · Theme by Míriel · Logic by Narvi
+  </div>
+  <div class="controls">
+    ← → to change paddle color<br>
+    Move mouse or touch to position paddle<br>
+    Catch matching colors for points!
+  </div>
+  <button onclick="startGame()">START</button>
+</div>
+
+<div class="overlay" id="gameOver">
+  <h1>GAME OVER</h1>
+  <div class="final-score">Score: <span id="finalScore">0</span></div>
+  <button onclick="startGame()">PLAY AGAIN</button>
+</div>
+
+<script>
+// === CONFIG ===
+// Míriel's neon color palette with glow
+const COLORS = [
+  { name: 'red',    fill: '#ff3366', glow: '#ff3366' },
+  { name: 'blue',   fill: '#3399ff', glow: '#3399ff' },
+  { name: 'green',  fill: '#33ff99', glow: '#33ff99' },
+  { name: 'yellow', fill: '#ffcc00', glow: '#ffcc00' },
+];
+
+const MAX_LIVES = 5;
+const INITIAL_SPEED = 2.5;
+const MAX_SPEED = 12;        // Narvi: speed cap
+const SPEED_INCREMENT = 0.15;
+const INITIAL_SPAWN_RATE = 60; // frames between spawns
+const MIN_SPAWN_RATE = 18;
+const BLOCK_WIDTH = 50;
+const BLOCK_HEIGHT = 30;
+const PADDLE_WIDTH = 120;
+const PADDLE_HEIGHT = 18;
+const PADDLE_BOTTOM = 50;
+const SCORE_PER_CATCH = 10;
+const SPEED_UP_EVERY = 50;   // points
+
+// === STATE ===
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W, H;
+let blocks = [];
+let paddleX;
+let paddleColorIndex = 0;
+let score = 0;
+let lives = MAX_LIVES;
+let speed = INITIAL_SPEED;
+let spawnRate = INITIAL_SPAWN_RATE;
+let spawnTimer = 0;
+let gameRunning = false;
+let animId;
+
+// === RESIZE ===
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// === INPUT ===
+let keys = {};
+window.addEventListener('keydown', e => {
+  if (!gameRunning) return;
+  // Narvi: wrap-around for paddle color cycling
+  if (e.key === 'ArrowLeft' || e.key === 'a') {
+    paddleColorIndex = (paddleColorIndex - 1 + COLORS.length) % COLORS.length;
+    updateHudColor();
+  }
+  if (e.key === 'ArrowRight' || e.key === 'd') {
+    paddleColorIndex = (paddleColorIndex + 1) % COLORS.length;
+    updateHudColor();
+  }
+});
+
+// Mouse/touch paddle positioning
+window.addEventListener('mousemove', e => {
+  if (gameRunning) paddleX = e.clientX;
+});
+window.addEventListener('touchmove', e => {
+  if (gameRunning && e.touches[0]) paddleX = e.touches[0].clientX;
+}, { passive: true });
+
+// === HUD ===
+function updateHudColor() {
+  const c = COLORS[paddleColorIndex];
+  const ind = document.getElementById('colorIndicator');
+  ind.style.background = c.fill;
+  ind.style.boxShadow = `0 0 10px ${c.glow}`;
+}
+
+function updateLives() {
+  const container = document.getElementById('livesContainer');
+  container.innerHTML = '';
+  for (let i = 0; i < MAX_LIVES; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'life-dot' + (i >= lives ? ' lost' : '');
+    container.appendChild(dot);
+  }
+}
+
+function updateScore() {
+  document.getElementById('scoreDisplay').textContent = score;
+}
+
+// === FLOATING SCORE POPUP — Míriel ===
+function showScorePopup(x, y, text, color) {
+  const el = document.createElement('div');
+  el.className = 'score-popup';
+  el.textContent = text;
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  el.style.color = color;
+  el.style.textShadow = `0 0 10px ${color}`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 800);
+}
+
+// === SCREEN SHAKE — Míriel ===
+function screenShake() {
+  canvas.classList.add('shake');
+  setTimeout(() => canvas.classList.remove('shake'), 300);
+}
+
+// === RED VIGNETTE — Míriel ===
+function vignetteFlash() {
+  const v = document.getElementById('vignette');
+  v.classList.add('flash');
+  setTimeout(() => v.classList.remove('flash'), 200);
+}
+
+// === CATCH FLASH — Míriel ===
+let flashAlpha = 0;
+let flashColor = '#fff';
+
+// === BLOCKS ===
+function spawnBlock() {
+  const colorIdx = Math.floor(Math.random() * COLORS.length);
+  // Narvi: ensure at least 2 colors possible (always true with 4)
+  const x = BLOCK_WIDTH / 2 + Math.random() * (W - BLOCK_WIDTH);
+  // Míriel: stretch effect at high speed
+  const stretchFactor = 1 + (speed - INITIAL_SPEED) / (MAX_SPEED - INITIAL_SPEED) * 0.4;
+  blocks.push({
+    x,
+    y: -BLOCK_HEIGHT,
+    colorIdx,
+    w: BLOCK_WIDTH,
+    h: BLOCK_HEIGHT * stretchFactor,
+    // Míriel: wobble phase
+    wobblePhase: Math.random() * Math.PI * 2,
+  });
+}
+
+// === COLLISION ===
+function checkCollision(block) {
+  const paddleY = H - PADDLE_BOTTOM;
+  const paddleLeft = paddleX - PADDLE_WIDTH / 2;
+  const paddleRight = paddleX + PADDLE_WIDTH / 2;
+  const blockBottom = block.y + block.h;
+  const blockLeft = block.x - block.w / 2;
+  const blockRight = block.x + block.w / 2;
+
+  return (
+    blockBottom >= paddleY &&
+    blockBottom <= paddleY + PADDLE_HEIGHT + speed && // tolerance for speed
+    blockRight >= paddleLeft &&
+    blockLeft <= paddleRight
+  );
+}
+
+// === GAME LOOP ===
+function gameLoop() {
+  if (!gameRunning) return;
+  animId = requestAnimationFrame(gameLoop);
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Míriel: catch flash overlay
+  if (flashAlpha > 0) {
+    ctx.save();
+    ctx.globalAlpha = flashAlpha;
+    ctx.fillStyle = flashColor;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+    flashAlpha -= 0.05;
+  }
+
+  // Spawn
+  spawnTimer++;
+  if (spawnTimer >= spawnRate) {
+    spawnBlock();
+    spawnTimer = 0;
+  }
+
+  // Narvi: process collisions carefully — lives check before further processing
+  const paddleColor = COLORS[paddleColorIndex];
+
+  // Update & draw blocks
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    b.y += speed;
+    b.wobblePhase += 0.1;
+
+    // Check collision
+    if (checkCollision(b)) {
+      // Narvi: color is locked at collision frame (no mid-catch change)
+      if (b.colorIdx === paddleColorIndex) {
+        // Match!
+        score += SCORE_PER_CATCH;
+        updateScore();
+        showScorePopup(b.x, b.y, '+' + SCORE_PER_CATCH, COLORS[b.colorIdx].fill);
+        flashColor = COLORS[b.colorIdx].fill;
+        flashAlpha = 0.15;
+
+        // Speed up — Narvi: capped
+        if (score % SPEED_UP_EVERY === 0 && speed < MAX_SPEED) {
+          speed = Math.min(speed + SPEED_INCREMENT, MAX_SPEED);
+          // Narvi: scale spawn rate with speed
+          spawnRate = Math.max(
+            MIN_SPAWN_RATE,
+            INITIAL_SPAWN_RATE - (speed - INITIAL_SPEED) * 3
+          );
+        }
+      } else {
+        // Wrong color!
+        lives--;
+        updateLives();
+        screenShake();
+        vignetteFlash();
+
+        // Narvi: check game over BEFORE processing more
+        if (lives <= 0) {
+          gameOver();
+          return;
+        }
+      }
+      blocks.splice(i, 1);
+      continue;
+    }
+
+    // Narvi: off-screen blocks — they just disappear (no life penalty, keeps game fair)
+    if (b.y > H + 50) {
+      blocks.splice(i, 1);
+      continue;
+    }
+
+    // Draw block — Míriel: glow + wobble
+    const c = COLORS[b.colorIdx];
+    const wobbleScale = 1 + Math.sin(b.wobblePhase) * 0.03;
+    ctx.save();
+    ctx.translate(b.x, b.y + b.h / 2);
+    ctx.scale(wobbleScale, 1);
+    ctx.shadowColor = c.glow;
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = c.fill;
+    ctx.beginPath();
+    roundRect(ctx, -b.w / 2, -b.h / 2, b.w, b.h, 8);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Draw paddle — Elanor: glowing pill
+  const py = H - PADDLE_BOTTOM;
+  // Míriel: glow intensity scales with speed
+  const glowIntensity = 20 + (speed - INITIAL_SPEED) / (MAX_SPEED - INITIAL_SPEED) * 30;
+  ctx.save();
+  ctx.shadowColor = paddleColor.glow;
+  ctx.shadowBlur = glowIntensity;
+  ctx.fillStyle = paddleColor.fill;
+  ctx.beginPath();
+  roundRect(ctx, paddleX - PADDLE_WIDTH / 2, py, PADDLE_WIDTH, PADDLE_HEIGHT, PADDLE_HEIGHT / 2);
+  ctx.fill();
+  // Double glow
+  ctx.shadowBlur = glowIntensity * 1.5;
+  ctx.fill();
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+}
+
+// === GAME OVER ===
+function gameOver() {
+  gameRunning = false;
+  cancelAnimationFrame(animId);
+  document.getElementById('finalScore').textContent = score;
+  document.getElementById('gameOver').classList.add('show');
+}
+
+// === START ===
+function startGame() {
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('gameOver').classList.remove('show');
+  document.getElementById('hud').style.display = 'flex';
+
+  blocks = [];
+  paddleX = W / 2;
+  paddleColorIndex = 0;
+  score = 0;
+  lives = MAX_LIVES;
+  speed = INITIAL_SPEED;
+  spawnRate = INITIAL_SPAWN_RATE;
+  spawnTimer = 0;
+  flashAlpha = 0;
+  gameRunning = true;
+
+  updateScore();
+  updateLives();
+  updateHudColor();
+  gameLoop();
+}
+</script>
+</body>
+</html>
