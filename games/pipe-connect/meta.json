@@ -1,15 +1,7 @@
 {
   "name": "Pipe Connect",
-  "slug": "pipe-connect",
-  "description": "Rotate pipe pieces to connect water flow from source to drain. Dark industrial puzzle with satisfying animations.",
-  "difficulty": "medium",
-  "category": "puzzle",
-  "version": "1.0.0",
-  "contributions": {
-    "Elanor Brightloom": "UI layout, dark industrial color palette (#111318 dark steel, #00d4ff electric cyan, #39ff14 source, #ff6b35 drain), grid CSS with 72px cells, HUD design with level/move counter, solved banner animation",
-    "Míriel Goldthread": "Steampunk-lite visual theme, snap-rotate animation with cubic-bezier overshoot, sequential water flow pulse animation with 0.08s delays, red pulse flash on disconnected pipes, staggered level transition animations, droplet particles at drain",
-    "Narvi Irondeep": "Game logic review — BFS flood-fill pathfinding, cycle detection, isolated pipe island handling, win condition after animation, source/drain lock, T-junction multi-direction checks, 3-tier difficulty progression (4x4 Easy / 6x6 Medium / 8x8 Hard)"
-  },
-  "created": "2026-03-24",
-  "builtBy": "Novalystrix with Elanor, Míriel, and Narvi"
+  "description": "Rotate pipe pieces to connect water flow from source to drain. Dark industrial puzzle with satisfying water flow animations.",
+  "emoji": "🔧",
+  "createdAt": "2026-03-24T12:30:00+02:00",
+  "builtBy": "Míriel, Orion, Elanor, Narvi, Nova"
 }

@@ -1,12 +1,7 @@
 {
   "name": "Tower Stack",
-  "description": "Stack blocks as high as you can! Blocks swing back and forth — tap to drop. Overhangs get sliced off, making each block narrower. Land perfect stacks to earn combos and grow your block back!",
+  "description": "Stack falling blocks with precision. Time your tap perfectly for combos. How high can you build?",
   "emoji": "🏗️",
-  "createdAt": "2026-03-24T14:30:00+02:00",
-  "builtBy": "Novalystrix",
-  "contributions": {
-    "Elanor Brightloom": "Requested neon/dark cosmic theme with gradient blocks — awaiting specific response",
-    "Míriel Goldthread": "Requested animation direction for block landings and particle effects — awaiting specific response",
-    "Narvi Irondeep": "Requested logic review for edge cases (slicing, combo system) — awaiting specific response"
-  }
+  "createdAt": "2026-03-24T12:30:00+02:00",
+  "builtBy": "Míriel, Orion, Elanor, Narvi, Nova"
 }

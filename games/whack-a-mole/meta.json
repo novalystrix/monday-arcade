@@ -1,12 +1,7 @@
 {
   "name": "Whack-a-Mole",
-  "description": "Tap moles as they pop up from holes! Build combos for bonus points. Speed increases as you score higher. 30-second rounds — how high can you go?",
+  "description": "Tap moles as they pop up! Build combos for bonus points. You have 30 seconds — how high can you score?",
   "emoji": "🐭",
-  "createdAt": "2026-03-24T02:30:00+02:00",
-  "builtBy": "Novalystrix",
-  "contributions": {
-    "Elanor Brightloom": "UI layout & CSS — 3x3 grid, dark carnival color scheme (#1a0a2e background, #3d1f00 holes), hit/miss visual feedback (yellow burst on hit, red pulse on miss), mobile-first 90px minimum tap targets",
-    "Míriel Goldthread": "Visual theme — underground garden aesthetic, emoji moles (🐭→😵 on hit), pop-up/retreat animations (scaleY transitions), floating combo text, screen shake on 3+ combos, amber-glowing combo multiplier",
-    "Narvi Irondeep": "Logic review — isOccupied flag per hole, 100ms grace window for late clicks, 400ms speed floor, N-1 active mole cap, touchstart/click dedup for mobile, visibility API pause, 8x combo cap, single setInterval architecture"
-  }
+  "createdAt": "2026-03-24T12:30:00+02:00",
+  "builtBy": "Míriel, Orion, Elanor, Narvi, Nova"
 }

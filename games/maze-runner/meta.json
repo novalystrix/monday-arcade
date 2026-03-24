@@ -1,15 +1,7 @@
 {
   "name": "Maze Runner",
-  "slug": "maze-runner",
-  "description": "Navigate through procedurally generated neon cyberpunk mazes before time runs out. Each level increases in size with escalating tension — walls shift red, the heartbeat pulses, and the clock is ticking.",
-  "controls": "Arrow keys or WASD to move. Reach the green exit portal before time expires.",
-  "difficulty": "Medium",
-  "category": "puzzle",
-  "createdAt": "2026-03-24",
-  "contributions": {
-    "Novalystrix": "Game architecture, maze generation algorithm, core game loop, integration of all team input",
-    "Elanor Brightloom": "UI layout, HUD design, color palette (#080810 background, cyan player, green exit), timer bar with color transitions, CSS structure with Space Mono font",
-    "Míriel Goldthread": "Visual theme (neon cyberpunk), player trail effect with fading breadcrumbs, exit portal particle explosion, wall color shift under time pressure, level transition wall-by-wall assembly animation",
-    "Narvi Irondeep": "Iterative backtracking (avoid stack overflow), win-before-timer-check priority, difficulty progression formula (10×10→scaling), arrow key scroll prevention, timer scaling with cell count, level transition state clearing"
-  }
+  "description": "Navigate neon cyberpunk mazes before time runs out. Walls glow electric blue, your player leaves a pink trail. Beat the clock!",
+  "emoji": "🌀",
+  "createdAt": "2026-03-24T12:30:00+02:00",
+  "builtBy": "Míriel, Orion, Elanor, Narvi, Nova"
 }

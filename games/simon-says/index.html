@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Simon Says — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0f;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #6c5ce7; }
+
+.game-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 20px;
+}
+
+.title {
+  font-size: 1.8rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #6c5ce7;
+  text-shadow: 0 0 20px #6c5ce788;
+}
+
+.score-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.score-label { color: #444466; font-size: 0.7rem; letter-spacing: 0.15em; text-transform: uppercase; }
+.score-val { font-size: 3rem; color: #fff; letter-spacing: 0.1em; line-height: 1; }
+.best-val { font-size: 0.8rem; color: #6c5ce7; }
+
+.simon-board {
+  position: relative;
+  width: 280px;
+  height: 280px;
+}
+
+.btn-quadrant {
+  position: absolute;
+  width: 130px;
+  height: 130px;
+  cursor: pointer;
+  transition: filter 0.1s;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+}
+
+.btn-quadrant:nth-child(1) { top: 0; left: 0; }
+.btn-quadrant:nth-child(2) { top: 0; right: 0; }
+.btn-quadrant:nth-child(3) { bottom: 0; left: 0; }
+.btn-quadrant:nth-child(4) { bottom: 0; right: 0; }
+
+.btn-q-inner {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.8rem;
+  transition: transform 0.1s, box-shadow 0.1s, filter 0.1s;
+}
+
+.btn-quadrant[data-color="red"]    .btn-q-inner { background: #cc1133; box-shadow: 0 0 8px #cc113388; }
+.btn-quadrant[data-color="blue"]   .btn-q-inner { background: #0055cc; box-shadow: 0 0 8px #0055cc88; }
+.btn-quadrant[data-color="green"]  .btn-q-inner { background: #00aa44; box-shadow: 0 0 8px #00aa4488; }
+.btn-quadrant[data-color="yellow"] .btn-q-inner { background: #cc9900; box-shadow: 0 0 8px #cc990088; }
+
+.btn-quadrant.lit[data-color="red"]    .btn-q-inner { background: #ff2244; box-shadow: 0 0 40px #ff2244, 0 0 80px #ff224488; transform: scale(1.08); }
+.btn-quadrant.lit[data-color="blue"]   .btn-q-inner { background: #3388ff; box-shadow: 0 0 40px #3388ff, 0 0 80px #3388ff88; transform: scale(1.08); }
+.btn-quadrant.lit[data-color="green"]  .btn-q-inner { background: #22dd66; box-shadow: 0 0 40px #22dd66, 0 0 80px #22dd6688; transform: scale(1.08); }
+.btn-quadrant.lit[data-color="yellow"] .btn-q-inner { background: #ffcc00; box-shadow: 0 0 40px #ffcc00, 0 0 80px #ffcc0088; transform: scale(1.08); }
+
+.center-hub {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: #0a0a0f;
+  border: 2px solid #222244;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  color: #333355;
+  letter-spacing: 0.12em;
+  z-index: 5;
+}
+
+.status-text {
+  font-size: 0.9rem;
+  color: #666688;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  min-height: 1.5em;
+  text-align: center;
+}
+.status-text.error { color: #ff2244; }
+.status-text.watch { color: #ffcc00; }
+.status-text.go { color: #22dd66; }
+
+.btn-action {
+  padding: 12px 36px;
+  background: transparent;
+  border: 2px solid #6c5ce7;
+  color: #6c5ce7;
+  font-family: 'Courier New', monospace;
+  font-size: 0.95rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s, color 0.2s;
+}
+.btn-action:hover { background: #6c5ce7; color: #fff; }
+
+.overlay {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(10,10,15,0.95);
+  z-index: 50; gap: 20px;
+}
+.overlay h1 {
+  font-size: 2.4rem; color: #6c5ce7;
+  text-shadow: 0 0 30px #6c5ce788;
+  letter-spacing: 0.15em;
+}
+.overlay .final { font-size: 3rem; color: #fff; }
+.overlay .record { font-size: 0.85rem; color: #6c5ce7; }
+.overlay .sub { color: #445; font-size: 0.75rem; text-align: center; line-height: 1.8; letter-spacing: 0.05em; }
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Back to Arcade</a>
+
+<div class="game-wrap">
+  <div class="title">Simon Says</div>
+
+  <div class="score-area">
+    <div class="score-label">Round</div>
+    <div class="score-val" id="roundVal">0</div>
+    <div class="best-val" id="bestVal">Best: 0</div>
+  </div>
+
+  <div class="simon-board" id="simonBoard">
+    <div class="btn-quadrant" data-color="red"    data-idx="0"><div class="btn-q-inner">🔴</div></div>
+    <div class="btn-quadrant" data-color="blue"   data-idx="1"><div class="btn-q-inner">🔵</div></div>
+    <div class="btn-quadrant" data-color="green"  data-idx="2"><div class="btn-q-inner">🟢</div></div>
+    <div class="btn-quadrant" data-color="yellow" data-idx="3"><div class="btn-q-inner">🟡</div></div>
+    <div class="center-hub">SIMON</div>
+  </div>
+
+  <div class="status-text" id="statusText">PRESS START</div>
+  <button class="btn-action" id="startBtn" onclick="startGame()">START</button>
+</div>
+
+<div class="overlay" id="gameOverOverlay" style="display:none">
+  <h1 style="color:#ff2244;text-shadow:0 0 30px #ff224488">WRONG!</h1>
+  <div class="final" id="goScore">0</div>
+  <div class="record" id="goRecord">Best: 0</div>
+  <button class="btn-action" onclick="startGame()">TRY AGAIN</button>
+</div>
+
+<script>
+const COLORS = ['red', 'blue', 'green', 'yellow'];
+const FLASH_MS = 400;
+const PAUSE_MS = 200;
+const SPEED_FACTOR = 0.95; // reduce flash time each round
+
+let sequence = [];
+let playerInput = [];
+let round = 0;
+let playerTurn = false;
+let locked = false;
+let highScore = parseInt(localStorage.getItem('simon-best') || '0');
+
+document.getElementById('bestVal').textContent = 'Best: ' + highScore;
+
+function getBtn(color) {
+  return document.querySelector(`.btn-quadrant[data-color="${color}"]`);
+}
+
+function flashBtn(color, duration) {
+  return new Promise(resolve => {
+    const btn = getBtn(color);
+    btn.classList.add('lit');
+    setTimeout(() => {
+      btn.classList.remove('lit');
+      resolve();
+    }, duration);
+  });
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function playSequence() {
+  playerTurn = false;
+  locked = true;
+  setStatus('WATCH CAREFULLY', 'watch');
+  await sleep(600);
+
+  const flashTime = Math.max(150, FLASH_MS * Math.pow(SPEED_FACTOR, round - 1));
+
+  for (const color of sequence) {
+    await flashBtn(color, flashTime);
+    await sleep(PAUSE_MS);
+  }
+
+  setStatus('YOUR TURN', 'go');
+  playerInput = [];
+  playerTurn = true;
+  locked = false;
+}
+
+function setStatus(text, type) {
+  const el = document.getElementById('statusText');
+  el.textContent = text;
+  el.className = 'status-text ' + (type || '');
+}
+
+function addToSequence() {
+  const color = COLORS[Math.floor(Math.random() * 4)];
+  sequence.push(color);
+}
+
+function startGame() {
+  document.getElementById('gameOverOverlay').style.display = 'none';
+  document.getElementById('startBtn').style.display = 'none';
+  sequence = [];
+  playerInput = [];
+  round = 0;
+  playerTurn = false;
+  nextRound();
+}
+
+async function nextRound() {
+  round++;
+  document.getElementById('roundVal').textContent = round - 1;
+  addToSequence();
+  await playSequence();
+}
+
+async function handlePress(color) {
+  if (!playerTurn || locked) return;
+
+  const expected = sequence[playerInput.length];
+  playerInput.push(color);
+
+  // Flash the button player pressed
+  locked = true;
+  const flashTime = Math.max(120, FLASH_MS * Math.pow(SPEED_FACTOR, round - 1));
+  await flashBtn(color, flashTime * 0.7);
+  locked = false;
+
+  if (color !== expected) {
+    // Wrong!
+    playerTurn = false;
+    setStatus('WRONG!', 'error');
+    // Flash red 3 times
+    for (let i = 0; i < 3; i++) {
+      for (const c of COLORS) getBtn(c).classList.add('lit');
+      await sleep(200);
+      for (const c of COLORS) getBtn(c).classList.remove('lit');
+      await sleep(150);
+    }
+    gameOver();
+    return;
+  }
+
+  // Correct!
+  if (playerInput.length === sequence.length) {
+    // Completed round!
+    const completed = round - 1;
+    document.getElementById('roundVal').textContent = completed;
+    setStatus(`ROUND ${completed} COMPLETE!`, 'go');
+    if (completed > highScore) {
+      highScore = completed;
+      localStorage.setItem('simon-best', highScore);
+      document.getElementById('bestVal').textContent = 'Best: ' + highScore;
+    }
+    await sleep(600);
+    nextRound();
+  } else {
+    setStatus(`${playerInput.length} / ${sequence.length}`, 'go');
+  }
+}
+
+function gameOver() {
+  const completed = round - 1;
+  document.getElementById('goScore').textContent = 'Round ' + completed;
+  document.getElementById('goRecord').textContent = 'Best: ' + highScore;
+  document.getElementById('gameOverOverlay').style.display = 'flex';
+  document.getElementById('startBtn').style.display = 'block';
+}
+
+// Attach button listeners
+document.querySelectorAll('.btn-quadrant').forEach(btn => {
+  btn.addEventListener('click', () => handlePress(btn.dataset.color));
+  btn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    handlePress(btn.dataset.color);
+  }, { passive: false });
+});
+
+// Keyboard: 1=red, 2=blue, 3=green, 4=yellow
+document.addEventListener('keydown', e => {
+  const map = { '1': 'red', '2': 'blue', '3': 'green', '4': 'yellow' };
+  if (map[e.key]) handlePress(map[e.key]);
+});
+</script>
+</body>
+</html>

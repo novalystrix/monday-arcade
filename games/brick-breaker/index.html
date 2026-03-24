@@ -2,71 +2,72 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Brick Breaker | Monday Arcade</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Brick Breaker — monday Arcade</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  background: #1a1a2e;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  font-family: 'Segoe UI', sans-serif;
-  color: #fff;
-  overflow: hidden;
+  background: #0a0a0f;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
 }
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #6c5ce7; }
 #header {
-  text-align: center;
-  margin-bottom: 12px;
+  text-align: center; margin-bottom: 8px;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #444466;
 }
-#header h1 {
-  font-size: 28px;
-  background: linear-gradient(135deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+#header h1 { font-size: 1.6rem; letter-spacing: 0.15em; background: linear-gradient(90deg, #6c5ce7, #00d4ff, #39ff14); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+#stats { display: flex; gap: 24px; font-size: 0.8rem; margin-top: 4px; color: #444466; justify-content: center; }
+#stats span { color: #6c5ce7; }
+canvas { border: 1px solid #1a1a3a; border-radius: 6px; background: #080810; cursor: none; box-shadow: 0 0 30px rgba(108,92,231,0.15); }
+.overlay {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(8,8,16,0.94); z-index: 20;
 }
-#stats {
-  display: flex;
-  gap: 30px;
-  font-size: 16px;
-  margin-top: 6px;
-  color: #aaa;
+.overlay h2 { font-size: 2.2rem; margin-bottom: 10px; letter-spacing: 0.15em; color: #6c5ce7; text-shadow: 0 0 20px #6c5ce788; }
+.overlay p { font-size: 0.85rem; color: #555577; margin-bottom: 20px; letter-spacing: 0.05em; text-align: center; max-width: 300px; line-height: 1.8; }
+.overlay button {
+  padding: 12px 36px; border: 2px solid #6c5ce7; background: transparent;
+  color: #6c5ce7; font-family: 'Courier New', monospace; font-size: 0.9rem;
+  letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; border-radius: 4px;
+  transition: background 0.2s, color 0.2s;
 }
-#stats span { color: #ffd93d; font-weight: bold; }
-canvas {
-  border: 2px solid #333;
-  border-radius: 8px;
-  background: #16213e;
-  cursor: none;
-}
-#overlay {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-}
-#overlay.active { pointer-events: all; }
-#overlay h2 { font-size: 36px; margin-bottom: 10px; }
-#overlay p { font-size: 18px; color: #aaa; margin-bottom: 20px; }
-#overlay button {
-  padding: 12px 32px;
-  font-size: 18px;
-  border: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #4d96ff, #6bcb77);
-  color: #fff;
-  cursor: pointer;
-  transition: transform 0.15s;
-}
-#overlay button:hover { transform: scale(1.08); }
+.overlay button:hover { background: #6c5ce7; color: #fff; }
 .hidden { display: none !important; }
+
+/* Power-up legend */
+.powerup-legend {
+  display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+  font-size: 0.65rem; color: #333355; margin-top: 6px; max-width: 600px;
+}
+.powerup-legend span { color: #6c5ce7; }
+
+/* Active powerups display */
+#active-powerups {
+  position: fixed; top: 60px; right: 12px;
+  display: flex; flex-direction: column; gap: 4px; z-index: 10;
+}
+.active-pu {
+  font-size: 0.65rem; letter-spacing: 0.05em;
+  padding: 3px 8px; border-radius: 3px; border: 1px solid;
+  animation: fadeSlide 0.2s ease-out;
+}
+@keyframes fadeSlide { from { opacity: 0; transform: translateX(10px); } }
 </style>
 </head>
 <body>
+<a class="back-link" href="/">← Back to Arcade</a>
 <div id="header">
   <h1>🧱 Brick Breaker</h1>
   <div id="stats">
@@ -74,17 +75,28 @@ canvas {
   </div>
 </div>
 <canvas id="game"></canvas>
-<div id="overlay" class="active">
-  <h2 id="ovTitle">🧱 Brick Breaker</h2>
-  <p id="ovMsg">Break all the bricks before you run out of lives!</p>
-  <button id="ovBtn" onclick="startGame()">Play</button>
+<div id="active-powerups"></div>
+
+<div id="overlay" class="overlay">
+  <h2 id="ovTitle">🧱 BRICK BREAKER</h2>
+  <p id="ovMsg">Break all the bricks! Catch power-ups for abilities.<br>
+    <span style="color:#39ff14">🔥</span> Wide Paddle &nbsp;
+    <span style="color:#00d4ff">⚡</span> Multi-Ball &nbsp;
+    <span style="color:#ffb300">🛡</span> Extra Life &nbsp;
+    <span style="color:#ff2d78">🎯</span> Fast Ball</p>
+  <button id="ovBtn" onclick="startGame()">PLAY</button>
+  <p style="color:#222244;font-size:0.65rem;margin-top:16px">Built by Míriel, Orion, Elanor, Narvi, Nova</p>
 </div>
 
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const W = 600, H = 500;
-canvas.width = W; canvas.height = H;
+const W = 560, H = 480;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+canvas.width = W * DPR; canvas.height = H * DPR;
+canvas.style.width = Math.min(W, window.innerWidth - 8) + 'px';
+canvas.style.height = Math.min(H, window.innerWidth - 8) * H / W + 'px';
+ctx.scale(DPR, DPR);
 
 const overlay = document.getElementById('overlay');
 const ovTitle = document.getElementById('ovTitle');
@@ -93,46 +105,82 @@ const ovBtn = document.getElementById('ovBtn');
 const scoreEl = document.getElementById('score');
 const livesEl = document.getElementById('lives');
 const levelEl = document.getElementById('level');
+const activePuEl = document.getElementById('active-powerups');
 
-const COLORS = ['#ff6b6b','#ffd93d','#6bcb77','#4d96ff','#cc65fe','#ff9f43'];
-const PADDLE_W = 90, PADDLE_H = 14, BALL_R = 7;
-const BRICK_ROWS = 5, BRICK_COLS = 10, BRICK_W = 54, BRICK_H = 20, BRICK_PAD = 4, BRICK_TOP = 40;
+const COLORS = ['#6c5ce7','#00d4ff','#39ff14','#ff2d78','#ffb300','#ff6b35'];
+const PADDLE_H = 12, BALL_R = 7;
+const BRICK_PAD = 4, BRICK_TOP = 36;
+const POWERUP_SIZE = 18, POWERUP_FALL = 2.5;
 
-let paddle, ball, bricks, score, lives, level, running, animId;
-let mouseX = W / 2;
+let paddle, balls, bricks, powerups, activePowerups, score, lives, level, running, animId;
+let mouseX;
+let particles = [];
+
+const LEVEL_LAYOUTS = [
+  // Level 1: basic 5x8
+  { rows: 5, cols: 8, brickW: 60 },
+  // Level 2: 6x9
+  { rows: 6, cols: 9, brickW: 54 },
+  // Level 3: 7x10
+  { rows: 7, cols: 10, brickW: 50 },
+  // Level 4: diamond-ish 7x10 with HP bricks
+  { rows: 7, cols: 10, brickW: 50, hpBricks: true },
+  // Level 5+: 8 rows, all HP
+  { rows: 8, cols: 10, brickW: 50, hpBricks: true, dense: true },
+];
+
+function getLevelConfig(lvl) {
+  return LEVEL_LAYOUTS[Math.min(lvl - 1, LEVEL_LAYOUTS.length - 1)];
+}
 
 function initBricks() {
   bricks = [];
-  for (let r = 0; r < BRICK_ROWS; r++) {
-    for (let c = 0; c < BRICK_COLS; c++) {
-      const hp = level >= 3 && r === 0 ? 2 : 1;
+  const cfg = getLevelConfig(level);
+  const { rows, cols, brickW, hpBricks, dense } = cfg;
+  const totalW = cols * (brickW + BRICK_PAD) - BRICK_PAD;
+  const startX = (W - totalW) / 2;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (dense && Math.random() < 0.1) continue; // sparse gaps
+      const hp = hpBricks && r === 0 ? 3 : (r < 2 && level >= 3 ? 2 : 1);
+      const powerupType = Math.random() < 0.12 ? randomPowerupType() : null;
       bricks.push({
-        x: c * (BRICK_W + BRICK_PAD) + 12,
-        y: r * (BRICK_H + BRICK_PAD) + BRICK_TOP,
-        w: BRICK_W, h: BRICK_H,
-        color: COLORS[r % COLORS.length],
-        alive: true,
-        hp
+        x: startX + c * (brickW + BRICK_PAD),
+        y: r * (20 + BRICK_PAD) + BRICK_TOP,
+        w: brickW, h: 20,
+        color: COLORS[(r + c) % COLORS.length],
+        alive: true, hp, maxHp: hp,
+        powerupType
       });
     }
   }
 }
 
-function resetBall() {
-  ball = { x: W/2, y: H - 60, dx: 3.5 * (Math.random()>0.5?1:-1), dy: -4, speed: 4 + level * 0.4 };
-  normalizeSpeed();
+function randomPowerupType() {
+  const types = ['wide', 'multiball', 'extralife', 'fastball', 'slowball'];
+  return types[Math.floor(Math.random() * types.length)];
 }
 
-function normalizeSpeed() {
-  const mag = Math.sqrt(ball.dx*ball.dx + ball.dy*ball.dy);
-  ball.dx = (ball.dx/mag) * ball.speed;
-  ball.dy = (ball.dy/mag) * ball.speed;
+function resetBalls() {
+  const speed = 4 + level * 0.3;
+  balls = [{ x: W / 2, y: H - 60, dx: 2.5 * (Math.random() > 0.5 ? 1 : -1), dy: -speed, speed, stuck: false }];
+  normalizeBall(balls[0]);
+}
+
+function normalizeBall(ball) {
+  const mag = Math.sqrt(ball.dx * ball.dx + ball.dy * ball.dy);
+  ball.dx = (ball.dx / mag) * ball.speed;
+  ball.dy = (ball.dy / mag) * ball.speed;
 }
 
 function init() {
-  paddle = { x: W/2 - PADDLE_W/2, y: H - 30, w: PADDLE_W, h: PADDLE_H };
+  paddle = { x: W / 2 - 50, y: H - 28, w: 80, h: PADDLE_H };
+  mouseX = W / 2;
+  activePowerups = {};
+  powerups = [];
   score = 0; lives = 3; level = 1;
-  initBricks(); resetBall(); updateUI();
+  initBricks(); resetBalls(); updateUI();
 }
 
 function updateUI() {
@@ -142,181 +190,287 @@ function updateUI() {
 }
 
 function drawPaddle() {
-  const grad = ctx.createLinearGradient(paddle.x, paddle.y, paddle.x + paddle.w, paddle.y);
-  grad.addColorStop(0, '#4d96ff');
-  grad.addColorStop(1, '#6bcb77');
+  const isWide = activePowerups.wide;
+  ctx.shadowColor = isWide ? '#39ff14' : '#6c5ce7';
+  ctx.shadowBlur = 12;
+  const grad = ctx.createLinearGradient(paddle.x, 0, paddle.x + paddle.w, 0);
+  grad.addColorStop(0, isWide ? '#39ff14' : '#6c5ce7');
+  grad.addColorStop(1, isWide ? '#00d4ff' : '#a855f7');
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.roundRect(paddle.x, paddle.y, paddle.w, paddle.h, 6);
+  ctx.roundRect(paddle.x, paddle.y, paddle.w, paddle.h, paddle.h / 2);
   ctx.fill();
+  ctx.shadowBlur = 0;
 }
 
-function drawBall() {
-  ctx.beginPath();
-  ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI*2);
-  ctx.fillStyle = '#fff';
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(ball.x - 2, ball.y - 2, 2, 0, Math.PI*2);
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.fill();
+function drawBalls() {
+  balls.forEach(ball => {
+    ctx.shadowColor = activePowerups.fastball ? '#ff2d78' : '#00d4ff';
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = activePowerups.fastball ? '#ff6b9d' : '#fff';
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+  });
 }
 
 function drawBricks() {
   bricks.forEach(b => {
     if (!b.alive) return;
-    ctx.fillStyle = b.hp > 1 ? '#fff' : b.color;
-    ctx.beginPath();
-    ctx.roundRect(b.x, b.y, b.w, b.h, 4);
-    ctx.fill();
+    const dim = b.hp < b.maxHp ? 0.6 + (b.hp / b.maxHp) * 0.4 : 1;
+    ctx.globalAlpha = dim;
+    ctx.shadowColor = b.color;
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = b.color;
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 4); ctx.fill();
+
     if (b.hp > 1) {
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4);
       ctx.fillStyle = b.color;
-      ctx.beginPath();
-      ctx.roundRect(b.x+2, b.y+2, b.w-4, b.h-4, 3);
-      ctx.fill();
+      ctx.font = 'bold 9px Courier New';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(b.hp, b.x + b.w / 2, b.y + b.h / 2);
     }
+
+    if (b.powerupType) {
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.font = '8px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const icons = { wide: '▬', multiball: '⊕', extralife: '♥', fastball: '↯', slowball: '⊘' };
+      ctx.fillText(icons[b.powerupType] || '★', b.x + b.w / 2, b.y + b.h / 2);
+    }
+
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
   });
 }
 
-let particles = [];
+function drawPowerups() {
+  const icons = { wide: '▬', multiball: '⊕', extralife: '♥', fastball: '↯', slowball: '⊘' };
+  const colors = { wide: '#39ff14', multiball: '#00d4ff', extralife: '#ff2d78', fastball: '#ffb300', slowball: '#a855f7' };
+  powerups.forEach(p => {
+    ctx.shadowColor = colors[p.type] || '#fff';
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = colors[p.type] || '#fff';
+    ctx.beginPath(); ctx.arc(p.x, p.y, POWERUP_SIZE / 2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0a0a0f';
+    ctx.font = 'bold 11px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(icons[p.type] || '★', p.x, p.y);
+    ctx.shadowBlur = 0;
+  });
+}
+
 function spawnParticles(x, y, color) {
   for (let i = 0; i < 8; i++) {
-    particles.push({
-      x, y,
-      dx: (Math.random()-0.5)*5,
-      dy: (Math.random()-0.5)*5,
-      life: 20 + Math.random()*10,
-      color
-    });
+    const angle = Math.random() * Math.PI * 2, speed = 1 + Math.random() * 3;
+    particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1, color, size: 2 + Math.random() * 2 });
   }
 }
-function updateParticles() {
-  particles.forEach(p => { p.x += p.dx; p.y += p.dy; p.life--; });
-  particles = particles.filter(p => p.life > 0);
+
+function updatePowerupDisplay() {
+  activePuEl.innerHTML = '';
+  const colors = { wide: '#39ff14', multiball: '#00d4ff', extralife: '#ff2d78', fastball: '#ffb300', slowball: '#a855f7' };
+  const names = { wide: 'WIDE', multiball: 'MULTIBALL', extralife: '', fastball: 'FASTBALL', slowball: 'SLOWBALL' };
+  for (const [type, timer] of Object.entries(activePowerups)) {
+    if (!timer || timer <= 0) continue;
+    const el = document.createElement('div');
+    el.className = 'active-pu';
+    el.style.borderColor = colors[type] || '#fff';
+    el.style.color = colors[type] || '#fff';
+    el.textContent = (names[type] || type.toUpperCase()) + ' ' + Math.ceil(timer / 60) + 's';
+    activePuEl.appendChild(el);
+  }
 }
-function drawParticles() {
-  particles.forEach(p => {
-    ctx.globalAlpha = p.life / 30;
-    ctx.fillStyle = p.color;
-    ctx.fillRect(p.x-2, p.y-2, 4, 4);
-  });
-  ctx.globalAlpha = 1;
+
+function applyPowerup(type) {
+  const FPS = 60;
+  switch (type) {
+    case 'wide':
+      activePowerups.wide = 8 * FPS;
+      paddle.w = 130;
+      break;
+    case 'multiball':
+      activePowerups.multiball = 1;
+      const base = balls[0];
+      balls.push({ x: base.x, y: base.y, dx: -base.dy, dy: base.dx, speed: base.speed });
+      balls.push({ x: base.x, y: base.y, dx: base.dy, dy: -base.dx, speed: base.speed });
+      break;
+    case 'extralife':
+      lives = Math.min(lives + 1, 6);
+      updateUI();
+      break;
+    case 'fastball':
+      activePowerups.fastball = 6 * FPS;
+      balls.forEach(b => { b.speed = Math.min(b.speed * 1.5, 12); normalizeBall(b); });
+      break;
+    case 'slowball':
+      activePowerups.slowball = 8 * FPS;
+      balls.forEach(b => { b.speed = Math.max(b.speed * 0.65, 2.5); normalizeBall(b); });
+      break;
+  }
+}
+
+function tickPowerups() {
+  if (activePowerups.wide) {
+    activePowerups.wide--;
+    if (activePowerups.wide <= 0) { delete activePowerups.wide; paddle.w = 80; }
+  }
+  if (activePowerups.fastball) {
+    activePowerups.fastball--;
+    if (activePowerups.fastball <= 0) { delete activePowerups.fastball; balls.forEach(b => { b.speed = 4 + level * 0.3; normalizeBall(b); }); }
+  }
+  if (activePowerups.slowball) {
+    activePowerups.slowball--;
+    if (activePowerups.slowball <= 0) { delete activePowerups.slowball; balls.forEach(b => { b.speed = 4 + level * 0.3; normalizeBall(b); }); }
+  }
 }
 
 function collisions() {
-  // walls
-  if (ball.x - BALL_R <= 0 || ball.x + BALL_R >= W) ball.dx *= -1;
-  if (ball.y - BALL_R <= 0) ball.dy *= -1;
-
-  // paddle
-  if (ball.dy > 0 &&
-      ball.y + BALL_R >= paddle.y &&
-      ball.y + BALL_R <= paddle.y + paddle.h + 4 &&
-      ball.x >= paddle.x &&
-      ball.x <= paddle.x + paddle.w) {
-    const hit = (ball.x - (paddle.x + paddle.w/2)) / (paddle.w/2);
-    ball.dx = hit * ball.speed * 0.9;
-    ball.dy = -Math.abs(ball.dy);
-    normalizeSpeed();
+  // Update powerup drops
+  for (let i = powerups.length - 1; i >= 0; i--) {
+    powerups[i].y += POWERUP_FALL;
+    // Catch
+    if (powerups[i].y >= paddle.y && powerups[i].y <= paddle.y + paddle.h &&
+        powerups[i].x >= paddle.x - POWERUP_SIZE && powerups[i].x <= paddle.x + paddle.w + POWERUP_SIZE) {
+      applyPowerup(powerups[i].type);
+      powerups.splice(i, 1); continue;
+    }
+    if (powerups[i].y > H) powerups.splice(i, 1);
   }
 
-  // bricks
-  bricks.forEach(b => {
-    if (!b.alive) return;
-    if (ball.x + BALL_R > b.x && ball.x - BALL_R < b.x + b.w &&
-        ball.y + BALL_R > b.y && ball.y - BALL_R < b.y + b.h) {
-      b.hp--;
-      if (b.hp <= 0) {
-        b.alive = false;
-        score += 10 * level;
-        spawnParticles(b.x + b.w/2, b.y + b.h/2, b.color);
-      } else {
-        score += 5;
+  balls.forEach((ball, bi) => {
+    // Walls
+    if (ball.x - BALL_R <= 0) { ball.x = BALL_R; ball.dx = Math.abs(ball.dx); }
+    if (ball.x + BALL_R >= W) { ball.x = W - BALL_R; ball.dx = -Math.abs(ball.dx); }
+    if (ball.y - BALL_R <= 0) { ball.y = BALL_R; ball.dy = Math.abs(ball.dy); }
+
+    // Paddle
+    if (ball.dy > 0 && ball.y + BALL_R >= paddle.y && ball.y + BALL_R <= paddle.y + paddle.h + 6 &&
+        ball.x >= paddle.x && ball.x <= paddle.x + paddle.w) {
+      const hit = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+      ball.dx = hit * ball.speed;
+      ball.dy = -Math.abs(ball.dy);
+      normalizeBall(ball);
+    }
+
+    // Bricks
+    for (const b of bricks) {
+      if (!b.alive) continue;
+      if (ball.x + BALL_R > b.x && ball.x - BALL_R < b.x + b.w &&
+          ball.y + BALL_R > b.y && ball.y - BALL_R < b.y + b.h) {
+        b.hp--;
+        spawnParticles(b.x + b.w / 2, b.y + b.h / 2, b.color);
+        if (b.hp <= 0) {
+          b.alive = false;
+          score += 10 * level;
+          if (b.powerupType) powerups.push({ x: b.x + b.w / 2, y: b.y, type: b.powerupType });
+        } else { score += 3; }
+        const ox = Math.min(ball.x + BALL_R - b.x, b.x + b.w - (ball.x - BALL_R));
+        const oy = Math.min(ball.y + BALL_R - b.y, b.y + b.h - (ball.y - BALL_R));
+        if (ox < oy) ball.dx *= -1; else ball.dy *= -1;
+        updateUI(); break;
       }
-      // reflect
-      const overlapX = Math.min(ball.x + BALL_R - b.x, b.x + b.w - (ball.x - BALL_R));
-      const overlapY = Math.min(ball.y + BALL_R - b.y, b.y + b.h - (ball.y - BALL_R));
-      if (overlapX < overlapY) ball.dx *= -1; else ball.dy *= -1;
-      updateUI();
     }
   });
 
-  // lose life
-  if (ball.y - BALL_R > H) {
-    lives--;
-    updateUI();
-    if (lives <= 0) {
-      gameOver(false);
-    } else {
-      resetBall();
+  // Ball out of bounds
+  for (let i = balls.length - 1; i >= 0; i--) {
+    if (balls[i].y - BALL_R > H) {
+      balls.splice(i, 1);
     }
   }
+  if (balls.length === 0) {
+    lives--;
+    updateUI();
+    if (lives <= 0) { gameOver(false); return; }
+    resetBalls();
+  }
 
-  // level complete
+  // Level complete
   if (bricks.every(b => !b.alive)) {
     level++;
     updateUI();
-    initBricks();
-    resetBall();
+    powerups = [];
+    initBricks(); resetBalls();
+    if (level > 5) { gameOver(true); }
   }
 }
 
 function loop() {
   ctx.clearRect(0, 0, W, H);
 
+  // Background
+  ctx.fillStyle = '#080810';
+  ctx.fillRect(0, 0, W, H);
+
   paddle.x = mouseX - paddle.w / 2;
   paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
 
-  ball.x += ball.dx;
-  ball.y += ball.dy;
+  balls.forEach(ball => { ball.x += ball.dx; ball.y += ball.dy; });
 
+  tickPowerups();
   collisions();
-  updateParticles();
+  updatePowerupDisplay();
+
+  // Particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color; ctx.shadowBlur = 4;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+    p.x += p.vx; p.y += p.vy; p.life -= 0.025;
+  });
+  particles = particles.filter(p => p.life > 0);
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
 
   drawBricks();
   drawPaddle();
-  drawBall();
-  drawParticles();
+  drawBalls();
+  drawPowerups();
 
   if (running) animId = requestAnimationFrame(loop);
 }
 
 function showOverlay(title, msg, btn) {
-  ovTitle.textContent = title;
-  ovMsg.textContent = msg;
-  ovBtn.textContent = btn;
+  ovTitle.innerHTML = title; ovMsg.innerHTML = msg; ovBtn.textContent = btn;
   overlay.classList.remove('hidden');
-  overlay.classList.add('active');
 }
 
 function gameOver(won) {
-  running = false;
-  cancelAnimationFrame(animId);
+  running = false; cancelAnimationFrame(animId);
+  const hs = parseInt(localStorage.getItem('brickbreaker-best') || '0');
+  if (score > hs) localStorage.setItem('brickbreaker-best', score);
+  const best = Math.max(score, hs);
   if (won) {
-    showOverlay('🎉 You Won!', `Score: ${score}`, 'Play Again');
+    showOverlay('🎉 YOU WIN!', `Score: ${score}<br><small>Best: ${best}</small>`, 'Play Again');
+    ovTitle.style.color = '#39ff14';
   } else {
-    showOverlay('💥 Game Over', `Score: ${score}`, 'Try Again');
+    showOverlay('GAME OVER', `Score: ${score}<br><small>Best: ${best}</small>`, 'Try Again');
+    ovTitle.style.color = '#ff2d78';
   }
+  ovBtn.onclick = startGame;
 }
 
 function startGame() {
   overlay.classList.add('hidden');
-  overlay.classList.remove('active');
+  activePuEl.innerHTML = '';
   init();
   running = true;
   loop();
 }
 
-canvas.addEventListener('mousemove', e => {
-  const rect = canvas.getBoundingClientRect();
-  mouseX = (e.clientX - rect.left) * (W / rect.width);
-});
+// Controls
+const getX = e => (e.clientX !== undefined ? e.clientX : e.touches[0].clientX);
+const getRect = () => canvas.getBoundingClientRect();
 
+canvas.addEventListener('mousemove', e => {
+  const r = getRect();
+  mouseX = (e.clientX - r.left) * (W / r.width);
+});
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  const rect = canvas.getBoundingClientRect();
-  mouseX = (e.touches[0].clientX - rect.left) * (W / rect.width);
+  const r = getRect();
+  mouseX = (e.touches[0].clientX - r.left) * (W / r.width);
 }, { passive: false });
+document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 </script>
 </body>
 </html>

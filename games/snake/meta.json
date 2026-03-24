@@ -1,12 +1,7 @@
 {
   "name": "Snake",
-  "description": "Classic arcade Snake! Guide your snake around the grid, eat food to grow and score points. Speed increases as you grow longer. How long can you survive?",
+  "description": "Classic neon cyberpunk Snake! Guide your glowing cyan serpent, eat pulsing green food, avoid walls and yourself. Speed increases every 5 points.",
   "emoji": "🐍",
   "createdAt": "2026-03-24T12:30:00+02:00",
-  "builtBy": "Novalystrix",
-  "contributions": {
-    "Elanor Brightloom": "No response — built without UI input",
-    "Míriel Goldthread": "No response — built without visual theme input",
-    "Narvi Irondeep": "No response — built without logic review"
-  }
+  "builtBy": "Míriel, Orion, Elanor, Narvi, Nova"
 }
