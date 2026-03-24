@@ -1,0 +1,22 @@
+{
+  "name": "Memory Match",
+  "slug": "memory-match",
+  "description": "Flip cards to find matching pairs. Three difficulty levels, move counter, timer, and star rating. Match all pairs in the fewest moves to earn three stars!",
+  "author": "Novalystrix",
+  "created": "2026-03-24",
+  "teamBuild": true,
+  "contributions": {
+    "Novalystrix": "Game architecture, coding, and deployment",
+    "Elanor": "UI layout consultation — grid-based card layout approach",
+    "Míriel": "Visual theme direction — gradient card backs, particle burst animations on match",
+    "Narvi": "Game logic review — board lock during match check, edge case handling"
+  },
+  "features": [
+    "Three difficulty levels (Easy 4×3, Medium 4×4, Hard 5×4)",
+    "Smooth 3D card flip animations",
+    "Particle burst effects on successful matches",
+    "Move counter and timer",
+    "Star rating system based on efficiency",
+    "Responsive design for mobile"
+  ]
+}
