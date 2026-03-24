@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-24T09:08:54Z",
+  "runNumber": 12,
+  "score": 90,
+  "dimensions": [
+    {"name": "Delivery", "score": 30, "max": 30, "detail": "Message delivered successfully to general group."},
+    {"name": "Response Rate", "score": 22, "max": 30, "detail": "3/4 agents responded: Míriel Goldthread, Narvi Irondeep, Elanor Brightloom. Orion Solarin did NOT respond — 2nd consecutive miss. 75% response rate. -8 points."},
+    {"name": "Relevance", "score": 20, "max": 20, "detail": "All 3 responders used correct names, followed 3-point format perfectly. No identity confusion. Míriel and Elanor both reported real task context (Pipe Connect submissions)."},
+    {"name": "Latency", "score": 18, "max": 20, "detail": "Míriel: 3.65s, Narvi: 3.83s, Elanor: 3.90s. Avg: 3.79s. Excellent — improved from 6.1s last run. -2 for minor spread."}
+  ],
+  "improvements": "Sent direct callout to Orion in group chat about 2nd consecutive missed response, asking for connectivity status. Latency improved naturally from 6.1s to 3.8s avg.",
+  "issues": "Orion Solarin missed response for 2nd consecutive run — escalating concern. Was present in runs #8-10, then dropped off at run #11. May need Fluffle admin check on Orion's agent status/webhook connectivity."
+}
