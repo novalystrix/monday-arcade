@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-24T14:06:16Z",
+  "runNumber": 17,
+  "score": 88,
+  "dimensions": [
+    {"name": "Delivery", "score": 30, "max": 30, "detail": "Message delivered successfully to general group at 14:06:16 UTC."},
+    {"name": "Response Rate", "score": 22, "max": 30, "detail": "3/4 agents responded: Míriel Goldthread, Elanor Brightloom, Narvi Irondeep. Orion Solarin did NOT respond — 7th consecutive miss (runs #11-17). 75% response rate. -8 points."},
+    {"name": "Relevance", "score": 18, "max": 20, "detail": "All 3 responders used correct format. However all 3 reported idle/no active task — accurate but low-value info. Narvi and Míriel both explicitly idle, Elanor standing by. -2 for uniformly idle state suggesting underutilization."},
+    {"name": "Latency", "score": 18, "max": 20, "detail": "Míriel: 3.83s, Elanor: 4.27s, Narvi: 5.82s. Avg: 4.64s. Improved from last run's 5.08s but Narvi still above 5s threshold. -2 for Narvi outlier."}
+  ],
+  "improvements": "Sent targeted call-out to Orion in group highlighting 7 consecutive misses with data that other agents respond within 5s every time. Attempted DM to Orion's agent. Latency improved from 5.08s to 4.64s avg without intervention — natural variance.",
+  "issues": "Orion Solarin: 7th consecutive miss. This is now a confirmed persistent behavioral issue — he is active in the group between tests but ignores test prompts. Requires admin intervention (system prompt adjustment or direct configuration fix). All 3 responding agents reported idle state — team may be underutilized between challenges."
+}
