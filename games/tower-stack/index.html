@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tower Stack — monday Arcade</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Inter:wght@400;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: linear-gradient(135deg, #0a0a2e 0%, #1a1a4e 40%, #2d1b69 100%);
+    font-family: 'Inter', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+    color: #fff;
+  }
+
+  #game-wrapper {
+    position: relative;
+    width: 400px;
+    height: 600px;
+    max-width: 95vw;
+    max-height: 90vh;
+  }
+
+  canvas {
+    width: 100%;
+    height: 100%;
+    border-radius: 16px;
+    box-shadow: 0 0 40px rgba(130, 80, 255, 0.3), 0 0 80px rgba(130, 80, 255, 0.1);
+  }
+
+  /* Overlays */
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: rgba(10, 10, 46, 0.92);
+    border-radius: 16px;
+    z-index: 10;
+    transition: opacity 0.3s;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+
+  .overlay h1 {
+    font-family: 'Fredoka One', cursive;
+    font-size: 2.2rem;
+    background: linear-gradient(90deg, #ff6b9d, #c084fc, #60a5fa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+  }
+
+  .overlay .subtitle {
+    font-size: 0.95rem;
+    color: #a0a0d0;
+    margin-bottom: 28px;
+  }
+
+  .overlay .score-display {
+    font-family: 'Fredoka One', cursive;
+    font-size: 3rem;
+    color: #fbbf24;
+    margin: 8px 0;
+  }
+
+  .overlay .high-score {
+    font-size: 0.85rem;
+    color: #a0a0d0;
+    margin-bottom: 20px;
+  }
+
+  .btn {
+    font-family: 'Fredoka One', cursive;
+    font-size: 1.1rem;
+    padding: 14px 40px;
+    border: none;
+    border-radius: 50px;
+    cursor: pointer;
+    background: linear-gradient(135deg, #c084fc, #818cf8);
+    color: #fff;
+    box-shadow: 0 4px 20px rgba(192, 132, 252, 0.4);
+    transition: transform 0.15s, box-shadow 0.15s;
+    letter-spacing: 0.5px;
+  }
+  .btn:hover { transform: scale(1.05); box-shadow: 0 6px 28px rgba(192, 132, 252, 0.6); }
+  .btn:active { transform: scale(0.97); }
+
+  /* HUD */
+  #hud {
+    position: absolute;
+    top: 16px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    padding: 0 20px;
+    z-index: 5;
+    pointer-events: none;
+  }
+  #hud .label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #a0a0d0;
+  }
+  #hud .value {
+    font-family: 'Fredoka One', cursive;
+    font-size: 1.4rem;
+    color: #fff;
+  }
+
+  /* Perfect text */
+  #perfect-text {
+    position: absolute;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Fredoka One', cursive;
+    font-size: 2rem;
+    color: #fbbf24;
+    text-shadow: 0 0 20px rgba(251, 191, 36, 0.6);
+    z-index: 6;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+
+  /* Combo */
+  #combo {
+    position: absolute;
+    top: 55%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Fredoka One', cursive;
+    font-size: 1.2rem;
+    color: #c084fc;
+    z-index: 6;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Credits */
+  .credits {
+    font-size: 0.7rem;
+    color: #606090;
+    margin-top: 16px;
+    text-align: center;
+  }
+
+  /* monday branding */
+  .monday-badge {
+    position: absolute;
+    bottom: 12px;
+    right: 16px;
+    font-size: 0.65rem;
+    color: #606090;
+    z-index: 5;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="game-wrapper">
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div><div class="label">Score</div><div class="value" id="score-val">0</div></div>
+    <div style="text-align:right"><div class="label">Best</div><div class="value" id="best-val">0</div></div>
+  </div>
+
+  <div id="perfect-text">✨ PERFECT! ✨</div>
+  <div id="combo"></div>
+
+  <!-- Start Screen -->
+  <div class="overlay" id="start-screen">
+    <h1>🏗️ Tower Stack</h1>
+    <p class="subtitle">Tap to stack blocks. Don't miss!</p>
+    <button class="btn" onclick="startGame()">PLAY</button>
+    <p class="credits">Built by the Novalystrix Agent Team</p>
+  </div>
+
+  <!-- Game Over Screen -->
+  <div class="overlay hidden" id="gameover-screen">
+    <h1>Game Over</h1>
+    <div class="score-display" id="final-score">0</div>
+    <p class="high-score" id="high-score-text">Best: 0</p>
+    <button class="btn" onclick="startGame()">PLAY AGAIN</button>
+  </div>
+
+  <div class="monday-badge">monday arcade</div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Hi-DPI
+const DPR = window.devicePixelRatio || 1;
+const W = 400;
+const H = 600;
+canvas.width = W * DPR;
+canvas.height = H * DPR;
+ctx.scale(DPR, DPR);
+
+// Game state
+let blocks = [];
+let currentBlock = null;
+let gameRunning = false;
+let score = 0;
+let highScore = parseInt(localStorage.getItem('towerstack-best') || '0');
+let combo = 0;
+let cameraY = 0;
+let targetCameraY = 0;
+let particles = [];
+let shakeAmount = 0;
+let perfectTimer = 0;
+
+const BLOCK_HEIGHT = 28;
+const BASE_SPEED = 2.5;
+const PERFECT_THRESHOLD = 4;
+const MIN_WIDTH = 12;
+
+// Colors — gradient palette cycling through warm to cool
+const COLORS = [
+  ['#ff6b9d', '#ff8a80'], // pink
+  ['#ff9a76', '#ffb347'], // orange
+  ['#ffd93d', '#ffe066'], // yellow
+  ['#6bcb77', '#98d8a0'], // green
+  ['#4ecdc4', '#7ee8d4'], // teal
+  ['#60a5fa', '#93c5fd'], // blue
+  ['#a78bfa', '#c4b5fd'], // purple
+  ['#c084fc', '#d8b4fe'], // violet
+  ['#f472b6', '#f9a8d4'], // rose
+];
+
+function getBlockColor(index) {
+  return COLORS[index % COLORS.length];
+}
+
+// Particle system
+class Particle {
+  constructor(x, y, color) {
+    this.x = x;
+    this.y = y;
+    this.vx = (Math.random() - 0.5) * 6;
+    this.vy = -Math.random() * 4 - 2;
+    this.life = 1;
+    this.decay = 0.02 + Math.random() * 0.02;
+    this.size = 2 + Math.random() * 3;
+    this.color = color;
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.12;
+    this.life -= this.decay;
+  }
+  draw(ctx) {
+    ctx.globalAlpha = this.life;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function spawnParticles(x, y, w, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push(new Particle(x + Math.random() * w, y, color));
+  }
+}
+
+// Stars background
+const stars = [];
+for (let i = 0; i < 60; i++) {
+  stars.push({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    size: Math.random() * 1.5 + 0.5,
+    speed: Math.random() * 0.3 + 0.1,
+    twinkle: Math.random() * Math.PI * 2
+  });
+}
+
+function drawBackground() {
+  // Dark gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0a0a2e');
+  grad.addColorStop(0.5, '#1a1a4e');
+  grad.addColorStop(1, '#2d1b69');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  const t = Date.now() * 0.001;
+  stars.forEach(s => {
+    const alpha = 0.3 + 0.4 * Math.sin(t * s.speed + s.twinkle);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(s.x, (s.y + cameraY * 0.1) % H, s.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawBlock(block, yOffset) {
+  const colors = getBlockColor(block.index);
+  const y = block.y + yOffset;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  roundRect(ctx, block.x + 3, y + 3, block.width, BLOCK_HEIGHT, 6);
+  ctx.fill();
+
+  // Main block gradient
+  const grad = ctx.createLinearGradient(block.x, y, block.x, y + BLOCK_HEIGHT);
+  grad.addColorStop(0, colors[0]);
+  grad.addColorStop(1, colors[1]);
+  ctx.fillStyle = grad;
+  roundRect(ctx, block.x, y, block.width, BLOCK_HEIGHT, 6);
+  ctx.fill();
+
+  // Highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  roundRect(ctx, block.x + 2, y + 2, block.width - 4, BLOCK_HEIGHT / 2 - 2, 4);
+  ctx.fill();
+
+  // Border
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, block.x, y, block.width, BLOCK_HEIGHT, 6);
+  ctx.stroke();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function startGame() {
+  document.getElementById('start-screen').classList.add('hidden');
+  document.getElementById('gameover-screen').classList.add('hidden');
+
+  blocks = [];
+  particles = [];
+  score = 0;
+  combo = 0;
+  cameraY = 0;
+  targetCameraY = 0;
+  shakeAmount = 0;
+
+  // Base block
+  const baseWidth = 120;
+  blocks.push({
+    x: (W - baseWidth) / 2,
+    y: H - 60,
+    width: baseWidth,
+    index: 0,
+    settled: true
+  });
+
+  spawnNewBlock();
+  gameRunning = true;
+  updateHUD();
+}
+
+function spawnNewBlock() {
+  const prev = blocks[blocks.length - 1];
+  const speed = BASE_SPEED + score * 0.08;
+  const dir = blocks.length % 2 === 0 ? 1 : -1;
+
+  currentBlock = {
+    x: dir > 0 ? -prev.width : W,
+    y: prev.y - BLOCK_HEIGHT - 2,
+    width: prev.width,
+    index: blocks.length,
+    speed: speed * dir,
+    settled: false
+  };
+}
+
+function dropBlock() {
+  if (!currentBlock || !gameRunning) return;
+
+  const prev = blocks[blocks.length - 1];
+  const cur = currentBlock;
+
+  // Calculate overlap
+  const overlapLeft = Math.max(cur.x, prev.x);
+  const overlapRight = Math.min(cur.x + cur.width, prev.x + prev.width);
+  const overlapWidth = overlapRight - overlapLeft;
+
+  if (overlapWidth <= 0) {
+    // Miss — game over
+    gameOver();
+    return;
+  }
+
+  const offset = Math.abs((cur.x + cur.width / 2) - (prev.x + prev.width / 2));
+
+  if (offset < PERFECT_THRESHOLD) {
+    // Perfect placement!
+    combo++;
+    cur.x = prev.x;
+    cur.width = prev.width;
+    cur.settled = true;
+    blocks.push(cur);
+
+    // Perfect effects
+    const colors = getBlockColor(cur.index);
+    spawnParticles(cur.x, cur.y, cur.width, colors[0], 20);
+    spawnParticles(cur.x, cur.y, cur.width, '#fbbf24', 10);
+    showPerfect();
+
+    // Bonus: perfect stacks grow the block slightly (up to base)
+    if (cur.width < 120) {
+      cur.width = Math.min(cur.width + 4, 120);
+      cur.x = prev.x + (prev.width - cur.width) / 2;
+    }
+  } else {
+    // Slice
+    combo = 0;
+    cur.x = overlapLeft;
+    cur.width = overlapWidth;
+    cur.settled = true;
+    blocks.push(cur);
+
+    // Spawn falling piece particles
+    const colors = getBlockColor(cur.index);
+    if (cur.width < prev.width) {
+      const sliceSide = (cur.x > prev.x) ? 'left' : 'right';
+      const px = sliceSide === 'left' ? prev.x : overlapRight;
+      spawnParticles(px, cur.y, prev.width - overlapWidth, colors[1], 8);
+    }
+  }
+
+  score++;
+  shakeAmount = 3;
+
+  if (cur.width < MIN_WIDTH) {
+    gameOver();
+    return;
+  }
+
+  // Camera
+  if (cur.y < H * 0.4) {
+    targetCameraY += BLOCK_HEIGHT + 2;
+  }
+
+  spawnNewBlock();
+  updateHUD();
+}
+
+function showPerfect() {
+  const el = document.getElementById('perfect-text');
+  el.style.opacity = '1';
+  perfectTimer = 40;
+
+  const comboEl = document.getElementById('combo');
+  if (combo >= 2) {
+    comboEl.textContent = `${combo}x COMBO!`;
+    comboEl.style.opacity = '1';
+  }
+}
+
+function gameOver() {
+  gameRunning = false;
+  currentBlock = null;
+  shakeAmount = 6;
+
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('towerstack-best', highScore.toString());
+  }
+
+  setTimeout(() => {
+    document.getElementById('final-score').textContent = score;
+    document.getElementById('high-score-text').textContent = `Best: ${highScore}`;
+    document.getElementById('gameover-screen').classList.remove('hidden');
+  }, 600);
+}
+
+function updateHUD() {
+  document.getElementById('score-val').textContent = score;
+  document.getElementById('best-val').textContent = highScore;
+}
+
+// Main loop
+function gameLoop() {
+  drawBackground();
+
+  // Camera smooth follow
+  cameraY += (targetCameraY - cameraY) * 0.08;
+
+  // Shake
+  let shakeX = 0, shakeY = 0;
+  if (shakeAmount > 0) {
+    shakeX = (Math.random() - 0.5) * shakeAmount;
+    shakeY = (Math.random() - 0.5) * shakeAmount;
+    shakeAmount *= 0.9;
+    if (shakeAmount < 0.3) shakeAmount = 0;
+  }
+
+  ctx.save();
+  ctx.translate(shakeX, shakeY + cameraY);
+
+  // Draw settled blocks
+  blocks.forEach(b => drawBlock(b, 0));
+
+  // Moving block
+  if (currentBlock && gameRunning) {
+    currentBlock.x += currentBlock.speed;
+
+    // Bounce at edges
+    if (currentBlock.x + currentBlock.width > W) {
+      currentBlock.x = W - currentBlock.width;
+      currentBlock.speed = -Math.abs(currentBlock.speed);
+    }
+    if (currentBlock.x < 0) {
+      currentBlock.x = 0;
+      currentBlock.speed = Math.abs(currentBlock.speed);
+    }
+
+    drawBlock(currentBlock, 0);
+  }
+
+  ctx.restore();
+
+  // Particles (screen space)
+  ctx.save();
+  ctx.translate(shakeX, shakeY + cameraY);
+  particles = particles.filter(p => p.life > 0);
+  particles.forEach(p => {
+    p.update();
+    p.draw(ctx);
+  });
+  ctx.restore();
+
+  // Perfect text fade
+  if (perfectTimer > 0) {
+    perfectTimer--;
+    if (perfectTimer === 0) {
+      document.getElementById('perfect-text').style.opacity = '0';
+      document.getElementById('combo').style.opacity = '0';
+    }
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+// Input
+document.addEventListener('click', (e) => {
+  if (!gameRunning) return;
+  if (e.target.tagName === 'BUTTON') return;
+  dropBlock();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && gameRunning) {
+    e.preventDefault();
+    dropBlock();
+  }
+});
+
+// Touch support
+document.addEventListener('touchstart', (e) => {
+  if (!gameRunning) return;
+  if (e.target.tagName === 'BUTTON') return;
+  e.preventDefault();
+  dropBlock();
+}, { passive: false });
+
+// Init
+document.getElementById('best-val').textContent = highScore;
+gameLoop();
+</script>
+
+</body>
+</html>
