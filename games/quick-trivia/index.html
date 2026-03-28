@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Quick Trivia — monday Arcade</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a1a;
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse at 50% 30%, #1a1040 0%, #0a0a1a 70%);
+    z-index: -1;
+  }
+
+  .header {
+    text-align: center;
+    padding: 16px 20px 8px;
+    width: 100%;
+    max-width: 420px;
+  }
+
+  .title {
+    font-size: 1.4rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #f59e0b, #ef4444, #ec4899);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Screens */
+  .screen { display: none; flex-direction: column; align-items: center; justify-content: center; gap: 20px; text-align: center; width: 100%; max-width: 420px; padding: 20px; min-height: 100vh; }
+  .screen.active { display: flex; }
+
+  .big-emoji { font-size: 4rem; }
+  .big-title { font-size: 2rem; font-weight: 800; }
+  .sub { color: #888; line-height: 1.5; }
+
+  /* Category select */
+  .cat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    width: 100%;
+    max-width: 360px;
+  }
+
+  .cat-btn {
+    padding: 20px 12px;
+    border: 2px solid #333;
+    border-radius: 16px;
+    background: #16161f;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .cat-btn:active { transform: scale(0.95); }
+
+  .cat-btn .cat-emoji { font-size: 1.8rem; }
+  .cat-btn .cat-label { font-size: 0.85rem; color: #aaa; font-weight: 600; }
+
+  .cat-btn[data-cat="science"] { border-color: #22c55e40; }
+  .cat-btn[data-cat="science"]:hover { border-color: #22c55e; background: #22c55e15; }
+  .cat-btn[data-cat="popculture"] { border-color: #ec489940; }
+  .cat-btn[data-cat="popculture"]:hover { border-color: #ec4899; background: #ec489915; }
+  .cat-btn[data-cat="geography"] { border-color: #3b82f640; }
+  .cat-btn[data-cat="geography"]:hover { border-color: #3b82f6; background: #3b82f615; }
+  .cat-btn[data-cat="mix"] { border-color: #f59e0b40; grid-column: span 2; }
+  .cat-btn[data-cat="mix"]:hover { border-color: #f59e0b; background: #f59e0b15; }
+  .cat-btn[data-cat="mix"] { flex-direction: row; justify-content: center; padding: 16px; gap: 10px; }
+
+  .back-link {
+    display: inline-block;
+    margin-top: 4px;
+    color: #666;
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+
+  /* Stats bar */
+  .stats-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 20px;
+    width: 100%;
+    max-width: 420px;
+    font-size: 0.9rem;
+  }
+
+  .stat { display: flex; flex-direction: column; align-items: center; }
+  .stat-val { font-size: 1.4rem; font-weight: 800; }
+  .stat-label { font-size: 0.65rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+
+  .timer-val { color: #22c55e; transition: color 0.3s; }
+  .timer-val.warning { color: #eab308; }
+  .timer-val.danger { color: #ef4444; animation: pulse 0.5s infinite; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .score-val { color: #a78bfa; }
+  .streak-val { color: #f59e0b; }
+
+  /* Progress bar */
+  .progress-wrap {
+    width: 100%;
+    max-width: 380px;
+    height: 4px;
+    background: #2a2a3a;
+    border-radius: 2px;
+    margin: 0 20px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #f59e0b, #ef4444);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+
+  /* Game area */
+  .game-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 420px;
+    padding: 10px 16px 20px;
+    gap: 12px;
+  }
+
+  /* Question card */
+  .question-card {
+    width: 100%;
+    background: linear-gradient(145deg, #1a1630, #130f28);
+    border: 1px solid #2a2040;
+    border-radius: 20px;
+    padding: 20px;
+    text-align: center;
+    min-height: 110px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .question-text {
+    font-size: 1.05rem;
+    font-weight: 600;
+    line-height: 1.5;
+    color: #e8e0ff;
+  }
+
+  /* Category badge */
+  .cat-badge {
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .badge-science { background: #22c55e20; color: #22c55e; }
+  .badge-popculture { background: #ec489920; color: #ec4899; }
+  .badge-geography { background: #3b82f620; color: #3b82f6; }
+
+  /* Answer buttons */
+  .answers-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .answer-btn {
+    padding: 0 12px;
+    height: 64px;
+    border: 2px solid #2a2040;
+    border-radius: 16px;
+    background: linear-gradient(145deg, #1e1a35, #16112a);
+    color: #d0c8f0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+    line-height: 1.3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .answer-btn:hover:not(:disabled) {
+    border-color: #6c5ce7;
+    background: linear-gradient(145deg, #2a2040, #201838);
+    transform: scale(1.02);
+  }
+
+  .answer-btn:active:not(:disabled) { transform: scale(0.97); }
+
+  .answer-btn.correct {
+    border-color: #22c55e;
+    background: linear-gradient(145deg, #22c55e20, #16a34a15);
+    color: #22c55e;
+    box-shadow: 0 0 16px #22c55e40;
+  }
+
+  .answer-btn.wrong {
+    border-color: #ef4444;
+    background: linear-gradient(145deg, #ef444420, #dc262615);
+    color: #ef4444;
+    box-shadow: 0 0 12px #ef444430;
+  }
+
+  .answer-btn.reveal {
+    border-color: #22c55e;
+    background: linear-gradient(145deg, #22c55e20, #16a34a15);
+    color: #22c55e;
+  }
+
+  .answer-btn:disabled { cursor: default; }
+
+  /* Streak multiplier display */
+  .streak-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: #888;
+  }
+
+  .multiplier-badge {
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 800;
+    font-size: 0.85rem;
+    background: #f59e0b20;
+    color: #f59e0b;
+    border: 1px solid #f59e0b40;
+    transition: all 0.3s;
+  }
+
+  .multiplier-badge.x2 { background: #f59e0b25; color: #f59e0b; border-color: #f59e0b60; }
+  .multiplier-badge.x3 { background: #ef444425; color: #ef4444; border-color: #ef444460; font-size: 1rem; }
+  .multiplier-badge.x5 { background: #ec489930; color: #ec4899; border-color: #ec489970; font-size: 1.1rem; animation: glow 1s infinite; }
+
+  @keyframes glow {
+    0%,100% { box-shadow: 0 0 8px #ec489960; }
+    50% { box-shadow: 0 0 20px #ec4899a0; }
+  }
+
+  /* Points flash */
+  .pts-flash {
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    font-size: 2rem;
+    font-weight: 800;
+    pointer-events: none;
+    z-index: 100;
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s;
+    opacity: 0;
+  }
+  .pts-flash.show {
+    transform: translate(-50%, -100%) scale(1);
+    opacity: 1;
+  }
+  .pts-flash.correct { color: #22c55e; }
+  .pts-flash.wrong { color: #ef4444; }
+  .pts-flash.streak { color: #f59e0b; }
+
+  /* End screen */
+  .end-card {
+    background: linear-gradient(145deg, #1a1630, #130f28);
+    border: 1px solid #2a2040;
+    border-radius: 20px;
+    padding: 24px;
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .final-score { font-size: 3rem; font-weight: 800; color: #a78bfa; }
+
+  .end-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .end-stat {
+    background: #12101e;
+    border-radius: 12px;
+    padding: 12px;
+    text-align: center;
+  }
+  .end-stat-val { font-size: 1.4rem; font-weight: 800; }
+  .end-stat-label { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+
+  .start-btn {
+    padding: 16px 48px;
+    background: linear-gradient(135deg, #6c5ce7, #a855f7);
+    color: white;
+    border: none;
+    border-radius: 16px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+    width: 100%;
+    max-width: 360px;
+  }
+  .start-btn:active { transform: scale(0.97); }
+
+  .q-counter {
+    font-size: 0.8rem;
+    color: #666;
+    font-weight: 600;
+  }
+
+  /* Timer ring */
+  .timer-ring-wrap {
+    position: relative;
+    width: 52px;
+    height: 52px;
+  }
+  .timer-ring-wrap svg {
+    transform: rotate(-90deg);
+    position: absolute;
+    top: 0; left: 0;
+  }
+  .timer-ring-bg { fill: none; stroke: #2a2a3a; stroke-width: 4; }
+  .timer-ring-fill { fill: none; stroke: #22c55e; stroke-width: 4; stroke-linecap: round; transition: stroke-dashoffset 0.2s linear, stroke 0.3s; }
+  .timer-center {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 1.2rem;
+    font-weight: 800;
+    transition: color 0.3s;
+    color: #22c55e;
+  }
+  .timer-center.warning { color: #eab308; }
+  .timer-center.danger { color: #ef4444; animation: pulse 0.5s infinite; }
+</style>
+</head>
+<body>
+
+<div class="pts-flash" id="pts-flash"></div>
+
+<!-- Category Select Screen -->
+<div class="screen active" id="cat-screen">
+  <div class="big-emoji">❓</div>
+  <div class="big-title">Quick Trivia</div>
+  <div class="sub">Answer fast — speed earns more points!<br>Build streaks for huge multipliers.</div>
+  <div style="font-size:0.85rem;color:#666;font-weight:600;">PICK A CATEGORY</div>
+  <div class="cat-grid">
+    <button class="cat-btn" data-cat="science" onclick="startGame('science')">
+      <span class="cat-emoji">🔬</span>
+      Science
+      <span class="cat-label">Nature & Tech</span>
+    </button>
+    <button class="cat-btn" data-cat="popculture" onclick="startGame('popculture')">
+      <span class="cat-emoji">🎬</span>
+      Pop Culture
+      <span class="cat-label">Movies & Music</span>
+    </button>
+    <button class="cat-btn" data-cat="geography" onclick="startGame('geography')">
+      <span class="cat-emoji">🌍</span>
+      Geography
+      <span class="cat-label">World & Places</span>
+    </button>
+    <button class="cat-btn" data-cat="mix" onclick="startGame('mix')">
+      <span class="cat-emoji">🎲</span>
+      Mix It Up
+      <span class="cat-label">All Categories</span>
+    </button>
+  </div>
+  <a class="back-link" href="/">← Back to Arcade</a>
+</div>
+
+<!-- Game Screen -->
+<div class="screen" id="game-screen">
+  <div class="header">
+    <div class="title">❓ Quick Trivia</div>
+  </div>
+  <div class="stats-bar">
+    <div class="timer-ring-wrap">
+      <svg width="52" height="52" viewBox="0 0 52 52">
+        <circle class="timer-ring-bg" cx="26" cy="26" r="22"/>
+        <circle class="timer-ring-fill" id="timer-ring" cx="26" cy="26" r="22" stroke-dasharray="138.2" stroke-dashoffset="0"/>
+      </svg>
+      <div class="timer-center" id="timer-text">10</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val" id="q-num" style="color:#6c5ce7;">1/15</div>
+      <div class="stat-label">Question</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val streak-val" id="streak-display">×1</div>
+      <div class="stat-label">Streak</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val score-val" id="score">0</div>
+      <div class="stat-label">Score</div>
+    </div>
+  </div>
+  <div style="width:100%;max-width:420px;padding:0 16px;">
+    <div class="progress-wrap" style="margin:0;">
+      <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+    </div>
+  </div>
+  <div class="game-area">
+    <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+      <span class="cat-badge" id="cat-badge">Science</span>
+      <span class="q-counter" id="q-counter">1 of 15</span>
+    </div>
+    <div class="question-card">
+      <div class="question-text" id="question-text">Loading...</div>
+    </div>
+    <div class="answers-grid" id="answers-grid">
+      <button class="answer-btn" id="ans-0"></button>
+      <button class="answer-btn" id="ans-1"></button>
+      <button class="answer-btn" id="ans-2"></button>
+      <button class="answer-btn" id="ans-3"></button>
+    </div>
+    <div class="streak-display">
+      <span id="streak-msg" style="color:#666;">Answer fast for bonus points!</span>
+    </div>
+  </div>
+</div>
+
+<!-- End Screen -->
+<div class="screen" id="end-screen">
+  <div class="big-emoji">🏆</div>
+  <div class="big-title">Round Over!</div>
+  <div class="end-card">
+    <div style="text-align:center;">
+      <div class="final-score" id="final-score">0</div>
+      <div style="color:#888;font-size:0.9rem;margin-top:4px;">total points</div>
+    </div>
+    <div class="end-stats">
+      <div class="end-stat">
+        <div class="end-stat-val" id="end-accuracy" style="color:#22c55e;">0%</div>
+        <div class="end-stat-label">Accuracy</div>
+      </div>
+      <div class="end-stat">
+        <div class="end-stat-val" id="end-streak" style="color:#f59e0b;">0</div>
+        <div class="end-stat-label">Best Streak</div>
+      </div>
+      <div class="end-stat">
+        <div class="end-stat-val" id="end-correct" style="color:#a78bfa;">0</div>
+        <div class="end-stat-label">Correct</div>
+      </div>
+      <div class="end-stat">
+        <div class="end-stat-val" id="end-bonus" style="color:#ec4899;">0</div>
+        <div class="end-stat-label">Speed Bonus</div>
+      </div>
+    </div>
+  </div>
+  <button class="start-btn" id="play-again-btn">Play Again</button>
+  <a class="back-link" href="/">← Back to Arcade</a>
+</div>
+
+<script>
+// ── Questions ──────────────────────────────────────────────────────────────
+const QUESTIONS = {
+  science: [
+    { q: "What planet is known as the Red Planet?", a: ["Mars","Venus","Jupiter","Saturn"], c: 0 },
+    { q: "How many legs does a spider have?", a: ["6","8","10","12"], c: 1 },
+    { q: "What gas do plants absorb from the air?", a: ["Oxygen","Nitrogen","Carbon Dioxide","Hydrogen"], c: 2 },
+    { q: "What is the hardest natural substance on Earth?", a: ["Gold","Iron","Diamond","Quartz"], c: 2 },
+    { q: "How many bones are in the adult human body?", a: ["106","206","306","406"], c: 1 },
+    { q: "What is the closest star to Earth?", a: ["Alpha Centauri","Betelgeuse","The Sun","Sirius"], c: 2 },
+    { q: "What is the chemical symbol for water?", a: ["WO","HO","H2O","W2O"], c: 2 },
+    { q: "Which organ pumps blood around the human body?", a: ["Liver","Kidneys","Lungs","Heart"], c: 3 },
+    { q: "What force keeps planets in orbit around the sun?", a: ["Magnetism","Gravity","Friction","Nuclear force"], c: 1 },
+    { q: "How many planets are in our Solar System?", a: ["7","8","9","10"], c: 1 },
+    { q: "What is the largest ocean on Earth?", a: ["Atlantic","Indian","Arctic","Pacific"], c: 3 },
+    { q: "What is the speed of light (approx) per second?", a: ["100,000 km","300,000 km","500,000 km","1,000,000 km"], c: 1 },
+    { q: "Which animal has the longest lifespan?", a: ["Elephant","Tortoise","Blue Whale","Parrot"], c: 1 },
+    { q: "What is the powerhouse of the cell?", a: ["Nucleus","Ribosome","Mitochondria","Vacuole"], c: 2 },
+    { q: "What is the most abundant element in the universe?", a: ["Oxygen","Carbon","Helium","Hydrogen"], c: 3 },
+    { q: "Sound travels fastest through which medium?", a: ["Air","Water","Steel","Vacuum"], c: 2 },
+    { q: "How many chromosomes does a typical human cell have?", a: ["23","36","46","92"], c: 2 },
+    { q: "What type of animal is a dolphin?", a: ["Fish","Reptile","Mammal","Amphibian"], c: 2 },
+    { q: "Which planet has the most moons?", a: ["Jupiter","Saturn","Uranus","Neptune"], c: 1 },
+    { q: "What is the largest organ in the human body?", a: ["Liver","Brain","Intestines","Skin"], c: 3 },
+  ],
+  popculture: [
+    { q: "Which movie features the character 'Simba'?", a: ["Bambi","The Jungle Book","The Lion King","Tarzan"], c: 2 },
+    { q: "What color is the sky in 'The Wizard of Oz' poppy field scene?", a: ["Red","Green","Yellow","Blue"], c: 3 },
+    { q: "Which band sang 'Bohemian Rhapsody'?", a: ["The Beatles","Led Zeppelin","Queen","ABBA"], c: 2 },
+    { q: "How many Harry Potter books are in the main series?", a: ["5","6","7","8"], c: 2 },
+    { q: "What is SpongeBob's best friend's name?", a: ["Squidward","Sandy","Patrick","Gary"], c: 2 },
+    { q: "Which singer is known as the 'Queen of Pop'?", a: ["Beyoncé","Rihanna","Madonna","Lady Gaga"], c: 2 },
+    { q: "In which city does the TV show 'Friends' take place?", a: ["Los Angeles","Chicago","Boston","New York City"], c: 3 },
+    { q: "What fictional school does Harry Potter attend?", a: ["Beauxbatons","Durmstrang","Hogwarts","Ilvermorny"], c: 2 },
+    { q: "Which superhero is known as the 'Man of Steel'?", a: ["Batman","Iron Man","Superman","Captain America"], c: 2 },
+    { q: "What year did the first iPhone release?", a: ["2005","2006","2007","2008"], c: 2 },
+    { q: "Which Disney princess has a sidekick named Flounder?", a: ["Belle","Cinderella","Ariel","Rapunzel"], c: 2 },
+    { q: "What is the name of Simba's father in The Lion King?", a: ["Scar","Mufasa","Timon","Pumba"], c: 1 },
+    { q: "Which video game features a plumber named Mario?", a: ["Sonic","Zelda","Super Mario","Kirby"], c: 2 },
+    { q: "Who sang 'Shape of You' in 2017?", a: ["Justin Bieber","Bruno Mars","Ed Sheeran","Sam Smith"], c: 2 },
+    { q: "What color is the Grinch?", a: ["Blue","Red","Purple","Green"], c: 3 },
+    { q: "Which planet does 'The Little Prince' live on?", a: ["B-612","B-215","C-316","A-101"], c: 0 },
+    { q: "What is the name of Elsa's kingdom in Frozen?", a: ["Arendelle","Narnia","Eldorado","Avalon"], c: 0 },
+    { q: "How many Infinity Stones are there in the Marvel universe?", a: ["4","5","6","7"], c: 2 },
+    { q: "What sport does the movie 'Space Jam' revolve around?", a: ["Football","Soccer","Baseball","Basketball"], c: 3 },
+    { q: "Which show features the Stark family?", a: ["Vikings","The Witcher","Game of Thrones","Outlander"], c: 2 },
+  ],
+  geography: [
+    { q: "What is the capital of Japan?", a: ["Osaka","Kyoto","Hiroshima","Tokyo"], c: 3 },
+    { q: "Which is the longest river in the world?", a: ["Amazon","Yangtze","Mississippi","Nile"], c: 3 },
+    { q: "On which continent is Egypt located?", a: ["Asia","Europe","Africa","South America"], c: 2 },
+    { q: "What is the capital of Australia?", a: ["Sydney","Melbourne","Brisbane","Canberra"], c: 3 },
+    { q: "Which country has the most natural lakes?", a: ["Russia","USA","Brazil","Canada"], c: 3 },
+    { q: "What is the tallest mountain in the world?", a: ["K2","Kangchenjunga","Mount Everest","Lhotse"], c: 2 },
+    { q: "Which ocean is the smallest?", a: ["Atlantic","Indian","Southern","Arctic"], c: 3 },
+    { q: "What is the capital of Brazil?", a: ["São Paulo","Rio de Janeiro","Brasília","Salvador"], c: 2 },
+    { q: "Which country has the largest population?", a: ["USA","India","Indonesia","China"], c: 3 },
+    { q: "How many continents are there on Earth?", a: ["5","6","7","8"], c: 2 },
+    { q: "What is the capital of France?", a: ["Lyon","Marseille","Nice","Paris"], c: 3 },
+    { q: "Which desert is the largest in the world?", a: ["Gobi","Arabian","Sahara","Antarctic"], c: 3 },
+    { q: "What is the smallest country in the world?", a: ["Monaco","San Marino","Liechtenstein","Vatican City"], c: 3 },
+    { q: "In which country is the Great Wall located?", a: ["Japan","South Korea","China","Mongolia"], c: 2 },
+    { q: "Which city is known as the 'City of Canals'?", a: ["Amsterdam","Bangkok","Venice","Stockholm"], c: 2 },
+    { q: "What is the largest country by land area?", a: ["China","USA","Canada","Russia"], c: 3 },
+    { q: "Which country has the most official languages?", a: ["India","Switzerland","South Africa","Belgium"], c: 2 },
+    { q: "What is the capital of Canada?", a: ["Toronto","Vancouver","Ottawa","Montreal"], c: 2 },
+    { q: "Which continent is known as the 'Dark Continent'?", a: ["Asia","South America","Africa","Australia"], c: 2 },
+    { q: "Which sea is the saltiest on Earth?", a: ["Red Sea","Caspian Sea","Dead Sea","Mediterranean Sea"], c: 2 },
+  ],
+};
+
+// ── Game State ─────────────────────────────────────────────────────────────
+const TOTAL_QUESTIONS = 15;
+const QUESTION_TIME = 10;
+const CIRCUMFERENCE = 2 * Math.PI * 22; // ≈138.2
+
+let category = 'mix';
+let questions = [];
+let currentQ = 0;
+let score = 0;
+let streak = 0;
+let bestStreak = 0;
+let correct = 0;
+let totalSpeedBonus = 0;
+let timeLeft = QUESTION_TIME;
+let timerInterval = null;
+let answered = false;
+let questionStartTime = 0;
+
+// ── Utility ────────────────────────────────────────────────────────────────
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function getMultiplier(str) {
+  if (str >= 8) return 5;
+  if (str >= 5) return 3;
+  if (str >= 3) return 2;
+  return 1;
+}
+
+function getMultiplierClass(mult) {
+  if (mult >= 5) return 'x5';
+  if (mult >= 3) return 'x3';
+  if (mult >= 2) return 'x2';
+  return '';
+}
+
+// ── Build question pool ────────────────────────────────────────────────────
+function buildQuestions(cat) {
+  let pool;
+  if (cat === 'mix') {
+    pool = [
+      ...QUESTIONS.science.map(q => ({...q, cat: 'science'})),
+      ...QUESTIONS.popculture.map(q => ({...q, cat: 'popculture'})),
+      ...QUESTIONS.geography.map(q => ({...q, cat: 'geography'})),
+    ];
+  } else {
+    pool = QUESTIONS[cat].map(q => ({...q, cat}));
+  }
+  return shuffle(pool).slice(0, TOTAL_QUESTIONS);
+}
+
+// ── Timer ──────────────────────────────────────────────────────────────────
+function updateTimerUI(t) {
+  const pct = t / QUESTION_TIME;
+  const offset = CIRCUMFERENCE * (1 - pct);
+  const ring = document.getElementById('timer-ring');
+  const text = document.getElementById('timer-text');
+  ring.style.strokeDashoffset = offset;
+
+  // Color transitions
+  let color, cls;
+  if (t <= 3) { color = '#ef4444'; cls = 'danger'; }
+  else if (t <= 5) { color = '#eab308'; cls = 'warning'; }
+  else { color = '#22c55e'; cls = ''; }
+
+  ring.style.stroke = color;
+  text.textContent = t;
+  text.className = 'timer-center' + (cls ? ' ' + cls : '');
+}
+
+function startTimer() {
+  timeLeft = QUESTION_TIME;
+  updateTimerUI(timeLeft);
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    timeLeft--;
+    updateTimerUI(timeLeft);
+    if (timeLeft <= 0) {
+      clearInterval(timerInterval);
+      onTimeout();
+    }
+  }, 1000);
+}
+
+function stopTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+}
+
+// ── Show Question ──────────────────────────────────────────────────────────
+function showQuestion() {
+  answered = false;
+  const qdata = questions[currentQ];
+
+  // Progress
+  const pct = (currentQ / TOTAL_QUESTIONS) * 100;
+  document.getElementById('progress-bar').style.width = pct + '%';
+
+  // Stats
+  document.getElementById('q-num').textContent = (currentQ + 1) + '/15';
+  document.getElementById('q-counter').textContent = (currentQ + 1) + ' of ' + TOTAL_QUESTIONS;
+  document.getElementById('score').textContent = score;
+
+  // Category badge
+  const badge = document.getElementById('cat-badge');
+  const catLabels = { science: '🔬 Science', popculture: '🎬 Pop Culture', geography: '🌍 Geography' };
+  badge.textContent = catLabels[qdata.cat] || qdata.cat;
+  badge.className = 'cat-badge badge-' + qdata.cat;
+
+  // Question text
+  document.getElementById('question-text').textContent = qdata.q;
+
+  // Answer buttons
+  for (let i = 0; i < 4; i++) {
+    const btn = document.getElementById('ans-' + i);
+    btn.textContent = qdata.a[i];
+    btn.className = 'answer-btn';
+    btn.disabled = false;
+    btn.onclick = () => onAnswer(i);
+  }
+
+  // Streak info
+  updateStreakUI();
+
+  questionStartTime = Date.now();
+  startTimer();
+}
+
+function updateStreakUI() {
+  const mult = getMultiplier(streak);
+  const streakEl = document.getElementById('streak-display');
+  streakEl.textContent = '×' + mult;
+  streakEl.className = 'stat-val streak-val';
+  if (mult >= 5) streakEl.style.color = '#ec4899';
+  else if (mult >= 3) streakEl.style.color = '#ef4444';
+  else if (mult >= 2) streakEl.style.color = '#f59e0b';
+  else streakEl.style.color = '#888';
+
+  const msg = document.getElementById('streak-msg');
+  if (streak === 0) msg.textContent = 'Answer fast for bonus points!';
+  else if (streak < 3) msg.textContent = streak + ' in a row — keep going!';
+  else if (streak < 5) msg.textContent = '🔥 ' + streak + ' streak — ×2 multiplier!';
+  else if (streak < 8) msg.textContent = '🔥🔥 ' + streak + ' streak — ×3 multiplier!';
+  else msg.textContent = '🔥🔥🔥 ' + streak + ' streak — ×5 MEGA BONUS!';
+}
+
+// ── Answer Handling ────────────────────────────────────────────────────────
+function onAnswer(idx) {
+  if (answered) return;
+  answered = true;
+  stopTimer();
+
+  const qdata = questions[currentQ];
+  const elapsed = (Date.now() - questionStartTime) / 1000;
+  const timeUsed = Math.min(elapsed, QUESTION_TIME);
+
+  // Speed points: 1000 → 100 linearly over 10s
+  const rawSpeed = Math.round(1000 - (900 * timeUsed / QUESTION_TIME));
+  const speedPts = Math.max(100, rawSpeed);
+
+  const isCorrect = idx === qdata.c;
+
+  // Disable all buttons, show feedback
+  for (let i = 0; i < 4; i++) {
+    const btn = document.getElementById('ans-' + i);
+    btn.disabled = true;
+    if (i === qdata.c) btn.classList.add('correct');
+  }
+
+  if (isCorrect) {
+    const mult = getMultiplier(streak);
+    const earned = speedPts * mult;
+    score += earned;
+    correct++;
+    streak++;
+    if (streak > bestStreak) bestStreak = streak;
+    totalSpeedBonus += speedPts;
+
+    document.getElementById('ans-' + idx).classList.add('correct');
+    showPointsFlash('+' + earned + (mult > 1 ? ' ×' + mult : ''), mult > 1 ? 'streak' : 'correct');
+  } else {
+    streak = 1;
+    document.getElementById('ans-' + idx).classList.add('wrong');
+    showPointsFlash('✗', 'wrong');
+  }
+
+  document.getElementById('score').textContent = score;
+  updateStreakUI();
+
+  // Advance after 1s delay
+  setTimeout(() => {
+    currentQ++;
+    if (currentQ >= TOTAL_QUESTIONS) {
+      endGame();
+    } else {
+      showQuestion();
+    }
+  }, 1000);
+}
+
+function onTimeout() {
+  if (answered) return;
+  answered = true;
+
+  const qdata = questions[currentQ];
+  streak = 1;
+
+  for (let i = 0; i < 4; i++) {
+    const btn = document.getElementById('ans-' + i);
+    btn.disabled = true;
+    if (i === qdata.c) btn.classList.add('reveal');
+  }
+
+  updateStreakUI();
+  showPointsFlash('⏱ Too slow!', 'wrong');
+
+  setTimeout(() => {
+    currentQ++;
+    if (currentQ >= TOTAL_QUESTIONS) {
+      endGame();
+    } else {
+      showQuestion();
+    }
+  }, 1000);
+}
+
+// ── Points Flash ───────────────────────────────────────────────────────────
+function showPointsFlash(text, cls) {
+  const el = document.getElementById('pts-flash');
+  el.textContent = text;
+  el.className = 'pts-flash ' + cls;
+  requestAnimationFrame(() => {
+    el.classList.add('show');
+    setTimeout(() => { el.classList.remove('show'); }, 700);
+  });
+}
+
+// ── Start / End ────────────────────────────────────────────────────────────
+function startGame(cat) {
+  category = cat || category;
+  questions = buildQuestions(category);
+  currentQ = 0;
+  score = 0;
+  streak = 0;
+  bestStreak = 0;
+  correct = 0;
+  totalSpeedBonus = 0;
+  answered = false;
+
+  showScreen('game-screen');
+  showQuestion();
+}
+
+function endGame() {
+  stopTimer();
+  const accuracy = Math.round((correct / TOTAL_QUESTIONS) * 100);
+
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('end-accuracy').textContent = accuracy + '%';
+  document.getElementById('end-streak').textContent = bestStreak;
+  document.getElementById('end-correct').textContent = correct + '/' + TOTAL_QUESTIONS;
+  document.getElementById('end-bonus').textContent = totalSpeedBonus;
+
+  document.getElementById('play-again-btn').onclick = () => showScreen('cat-screen');
+
+  document.getElementById('progress-bar').style.width = '100%';
+
+  showScreen('end-screen');
+}
+
+// ── Keyboard Support ───────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (document.getElementById('game-screen').classList.contains('active')) {
+    const map = { '1': 0, '2': 1, '3': 2, '4': 3 };
+    if (e.key in map) onAnswer(map[e.key]);
+  }
+});
+</script>
+</body>
+</html>
