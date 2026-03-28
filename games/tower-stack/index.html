@@ -108,7 +108,10 @@ canvas { width: 100%; height: 100%; border-radius: 16px; box-shadow: 0 0 40px rg
   <div class="monday-badge">monday arcade</div>
 </div>
 
+<script src="../shared/sounds.js"></script>
 <script>
+ArcadeSound.initSoundButton(document.body);
+
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
@@ -275,6 +278,8 @@ function dropBlock() {
   if (centerDiff <= PERFECT_THRESHOLD) {
     // Perfect!
     combo++;
+    ArcadeSound.success();
+    if (combo >= 2) ArcadeSound.combo(combo);
     cur.x = prev.x; cur.width = prev.width;
     cur.settled = true; blocks.push(cur);
     const [c1] = getColor(cur.index);
@@ -285,6 +290,8 @@ function dropBlock() {
     if (cur.width < 120) { cur.width = Math.min(cur.width + 3, 120); cur.x = prev.x + (prev.width - cur.width) / 2; }
   } else {
     combo = 0;
+    ArcadeSound.tap();
+    ArcadeSound.pop();
     cur.x = overlapLeft; cur.width = overlapWidth;
     cur.settled = true; blocks.push(cur);
     const [c1] = getColor(cur.index);
@@ -313,6 +320,7 @@ function showPerfect() {
 }
 
 function gameOver() {
+  ArcadeSound.gameOver();
   gameRunning = false; currentBlock = null; shakeAmount = 8;
   if (score > highScore) { highScore = score; localStorage.setItem('towerstack-best', highScore.toString()); }
   setTimeout(() => {

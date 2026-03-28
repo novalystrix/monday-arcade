@@ -369,7 +369,10 @@
   </div>
 </div>
 
+<script src="../shared/sounds.js"></script>
 <script>
+ArcadeSound.initSoundButton(document.body);
+
 // Word lists by difficulty
 const WORDS = {
   easy: [
@@ -476,6 +479,7 @@ function renderAnswer() {
 
 function pickLetter(idx) {
   if (answerLetters.some(a => a.srcIndex === idx)) return;
+  ArcadeSound.tap();
   answerLetters.push({ letter: scrambledLetters[idx], srcIndex: idx });
   renderScrambled();
   renderAnswer();
@@ -564,6 +568,8 @@ function submitAnswer() {
     score += earned;
     guessedWords.push(currentWord);
 
+    if (combo > 1) ArcadeSound.combo(combo);
+    else ArcadeSound.success();
     showFeedback(combo > 1 ? `+${earned} 🔥x${combo}` : `+${earned} ✓`, combo > 1 ? 'streak' : 'correct');
     document.getElementById('score').textContent = score;
     document.getElementById('combo').textContent = combo + 'x';
@@ -573,6 +579,7 @@ function submitAnswer() {
     // Wrong
     combo = 0;
     wordsSkipped++;
+    ArcadeSound.error();
     showFeedback('✗ ' + currentWord.toUpperCase(), 'wrong');
     document.getElementById('combo').textContent = '0x';
 
@@ -587,7 +594,8 @@ function updateTimer() {
   el.textContent = timer;
   el.classList.toggle('warning', timer <= 20 && timer > 10);
   el.classList.toggle('danger', timer <= 10);
-  if (timer <= 0) endGame();
+  if (timer <= 10 && timer > 0) ArcadeSound.tick();
+  if (timer <= 0) { ArcadeSound.gameOver(); endGame(); }
 }
 
 function startGame() {

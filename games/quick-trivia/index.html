@@ -488,7 +488,10 @@
   <a class="back-link" href="/">← Back to Arcade</a>
 </div>
 
+<script src="../shared/sounds.js"></script>
 <script>
+ArcadeSound.initSoundButton(document.body);
+
 // ── Questions ──────────────────────────────────────────────────────────────
 const QUESTIONS = {
   science: [
@@ -647,6 +650,7 @@ function startTimer() {
   timerInterval = setInterval(() => {
     timeLeft--;
     updateTimerUI(timeLeft);
+    if (timeLeft <= 5 && timeLeft > 0) ArcadeSound.tick();
     if (timeLeft <= 0) {
       clearInterval(timerInterval);
       onTimeout();
@@ -738,6 +742,7 @@ function onAnswer(idx) {
     if (i === qdata.c) btn.classList.add('correct');
   }
 
+  ArcadeSound.tap();
   if (isCorrect) {
     const mult = getMultiplier(streak);
     const earned = speedPts * mult;
@@ -747,10 +752,12 @@ function onAnswer(idx) {
     if (streak > bestStreak) bestStreak = streak;
     totalSpeedBonus += speedPts;
 
+    ArcadeSound.success();
     document.getElementById('ans-' + idx).classList.add('correct');
     showPointsFlash('+' + earned + (mult > 1 ? ' ×' + mult : ''), mult > 1 ? 'streak' : 'correct');
   } else {
     streak = 1;
+    ArcadeSound.error();
     document.getElementById('ans-' + idx).classList.add('wrong');
     showPointsFlash('✗', 'wrong');
   }
@@ -824,6 +831,8 @@ function startGame(cat) {
 
 function endGame() {
   stopTimer();
+  if (correct === TOTAL_QUESTIONS) ArcadeSound.win();
+  else ArcadeSound.gameOver();
   const accuracy = Math.round((correct / TOTAL_QUESTIONS) * 100);
 
   document.getElementById('final-score').textContent = score;

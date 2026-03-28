@@ -190,7 +190,10 @@ body {
   <button class="btn-action" onclick="startGame()">TRY AGAIN</button>
 </div>
 
+<script src="../shared/sounds.js"></script>
 <script>
+ArcadeSound.initSoundButton(document.body);
+
 const COLORS = ['red', 'blue', 'green', 'yellow'];
 const FLASH_MS = 400;
 const PAUSE_MS = 200;
@@ -281,9 +284,14 @@ async function handlePress(color) {
   await flashBtn(color, flashTime * 0.7);
   locked = false;
 
+  // Play pitched tone per color
+  const colorTones = { red: 1, blue: 2, green: 3, yellow: 4 };
+  ArcadeSound.combo(colorTones[color] || 1);
+
   if (color !== expected) {
     // Wrong!
     playerTurn = false;
+    ArcadeSound.error();
     setStatus('WRONG!', 'error');
     // Flash red 3 times
     for (let i = 0; i < 3; i++) {
@@ -300,6 +308,7 @@ async function handlePress(color) {
   if (playerInput.length === sequence.length) {
     // Completed round!
     const completed = round - 1;
+    ArcadeSound.success();
     document.getElementById('roundVal').textContent = completed;
     setStatus(`ROUND ${completed} COMPLETE!`, 'go');
     if (completed > highScore) {
@@ -315,6 +324,7 @@ async function handlePress(color) {
 }
 
 function gameOver() {
+  ArcadeSound.gameOver();
   const completed = round - 1;
   document.getElementById('goScore').textContent = 'Round ' + completed;
   document.getElementById('goRecord').textContent = 'Best: ' + highScore;
