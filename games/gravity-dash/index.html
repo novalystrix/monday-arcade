@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Gravity Dash — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0f;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #6c5ce7; }
+#header {
+  text-align: center; margin-bottom: 8px;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #444466;
+}
+#header h1 {
+  font-size: 1.6rem; letter-spacing: 0.15em;
+  background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6c5ce7, #00d4ff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+#stats { display: flex; gap: 24px; font-size: 0.8rem; margin-top: 4px; color: #444466; justify-content: center; }
+#stats span { color: #6c5ce7; }
+canvas { border-radius: 8px; display: block; margin-top: 8px; }
+#overlay {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(10,10,15,0.92); z-index: 50;
+  transition: opacity 0.3s;
+}
+#overlay.hidden { opacity: 0; pointer-events: none; }
+#overlay h2 {
+  font-size: 2rem; letter-spacing: 0.15em; margin-bottom: 12px;
+  background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6c5ce7);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+#overlay .sub { color: #666688; font-size: 0.85rem; margin-bottom: 24px; }
+#overlay .score-line { color: #ffd93d; font-size: 1.2rem; margin-bottom: 8px; }
+#overlay .best-line { color: #6c5ce7; font-size: 0.9rem; margin-bottom: 24px; }
+.btn {
+  background: linear-gradient(135deg, #6c5ce7, #00d4ff);
+  border: none; color: #fff; padding: 12px 36px; border-radius: 30px;
+  font-family: inherit; font-size: 1rem; cursor: pointer;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  box-shadow: 0 0 30px rgba(108,92,231,0.4);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.btn:hover { transform: scale(1.05); box-shadow: 0 0 40px rgba(108,92,231,0.6); }
+#instructions { color: #555577; font-size: 0.75rem; margin-top: 16px; text-align: center; line-height: 1.6; }
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<div id="header">
+  <h1>🌀 GRAVITY DASH</h1>
+  <div id="stats">
+    Score <span id="score">0</span>
+    Best <span id="best">0</span>
+    Speed <span id="speed">1x</span>
+  </div>
+</div>
+<canvas id="c"></canvas>
+<div id="overlay">
+  <h2>GRAVITY DASH</h2>
+  <div class="sub">Flip gravity. Dodge everything.</div>
+  <div class="score-line" id="finalScore" style="display:none"></div>
+  <div class="best-line" id="finalBest" style="display:none"></div>
+  <button class="btn" id="startBtn">START</button>
+  <div id="instructions">
+    SPACE / TAP to flip gravity<br>
+    Collect ⚡ orbs for bonus points<br>
+    Survive as long as you can
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const speedEl = document.getElementById('speed');
+const finalScoreEl = document.getElementById('finalScore');
+const finalBestEl = document.getElementById('finalBest');
+
+let W, H;
+function resize() {
+  const maxW = Math.min(window.innerWidth - 24, 600);
+  const maxH = Math.min(window.innerHeight - 140, 400);
+  W = canvas.width = maxW;
+  H = canvas.height = maxH;
+}
+resize();
+window.addEventListener('resize', resize);
+
+let bestScore = parseInt(localStorage.getItem('gravdash_best') || '0');
+bestEl.textContent = bestScore;
+
+// State
+let running = false;
+let score = 0;
+let speedMult = 1;
+let frameCount = 0;
+let player, obstacles, orbs, particles, stars, trails;
+
+const GRAVITY = 0.45;
+const JUMP_VEL = -7;
+const PLAYER_SIZE = 14;
+const FLOOR_H = 30;
+
+function initStars() {
+  stars = [];
+  for (let i = 0; i < 80; i++) {
+    stars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      s: Math.random() * 1.5 + 0.5,
+      speed: Math.random() * 0.5 + 0.2,
+      alpha: Math.random() * 0.6 + 0.2
+    });
+  }
+}
+
+function init() {
+  score = 0;
+  speedMult = 1;
+  frameCount = 0;
+  player = {
+    x: 80,
+    y: H / 2,
+    vy: 0,
+    gravDir: 1, // 1 = down, -1 = up
+    trail: [],
+    invuln: 0
+  };
+  obstacles = [];
+  orbs = [];
+  particles = [];
+  trails = [];
+  initStars();
+  scoreEl.textContent = '0';
+  speedEl.textContent = '1x';
+}
+
+function flipGravity() {
+  if (!running) return;
+  player.gravDir *= -1;
+  player.vy = JUMP_VEL * player.gravDir;
+  // Flip particles
+  for (let i = 0; i < 8; i++) {
+    particles.push({
+      x: player.x, y: player.y,
+      vx: (Math.random() - 0.5) * 4,
+      vy: (Math.random() - 0.5) * 4,
+      life: 20 + Math.random() * 15,
+      maxLife: 35,
+      color: player.gravDir === 1 ? '#ff6b6b' : '#00d4ff',
+      size: Math.random() * 3 + 1
+    });
+  }
+}
+
+// Input
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); flipGravity(); }
+});
+canvas.addEventListener('click', flipGravity);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); flipGravity(); }, { passive: false });
+
+function spawnObstacle() {
+  const gapH = Math.max(70, 120 - speedMult * 5);
+  const gapY = FLOOR_H + 20 + Math.random() * (H - FLOOR_H * 2 - gapH - 40);
+  const w = 28 + Math.random() * 16;
+  obstacles.push({
+    x: W + 10,
+    y: 0,
+    w: w,
+    h: gapY,
+    passed: false
+  });
+  obstacles.push({
+    x: W + 10,
+    y: gapY + gapH,
+    w: w,
+    h: H - gapY - gapH,
+    passed: false
+  });
+}
+
+function spawnOrb() {
+  orbs.push({
+    x: W + 10,
+    y: FLOOR_H + 20 + Math.random() * (H - FLOOR_H * 2 - 40),
+    r: 8,
+    pulse: Math.random() * Math.PI * 2,
+    collected: false
+  });
+}
+
+function update() {
+  frameCount++;
+  speedMult = 1 + Math.floor(frameCount / 600) * 0.25;
+  speedEl.textContent = speedMult.toFixed(2) + 'x';
+  const baseSpeed = 3 * speedMult;
+
+  // Player physics
+  player.vy += GRAVITY * player.gravDir;
+  player.vy = Math.max(-12, Math.min(12, player.vy));
+  player.y += player.vy;
+
+  // Floor/ceiling bounds
+  const topBound = FLOOR_H + PLAYER_SIZE;
+  const botBound = H - FLOOR_H - PLAYER_SIZE;
+  if (player.y < topBound) { player.y = topBound; player.vy = 0; }
+  if (player.y > botBound) { player.y = botBound; player.vy = 0; }
+
+  // Trail
+  player.trail.push({ x: player.x, y: player.y });
+  if (player.trail.length > 20) player.trail.shift();
+
+  // Spawn obstacles
+  if (frameCount % Math.max(45, 80 - Math.floor(speedMult * 5)) === 0) {
+    spawnObstacle();
+  }
+  if (frameCount % 120 === 60) {
+    spawnOrb();
+  }
+
+  // Move obstacles
+  for (let o of obstacles) {
+    o.x -= baseSpeed;
+    if (!o.passed && o.x + o.w < player.x) {
+      o.passed = true;
+      score++;
+      scoreEl.textContent = score;
+    }
+  }
+  obstacles = obstacles.filter(o => o.x + o.w > -10);
+
+  // Move orbs
+  for (let o of orbs) {
+    o.x -= baseSpeed;
+    o.pulse += 0.08;
+    if (!o.collected) {
+      const dx = player.x - o.x, dy = player.y - o.y;
+      if (Math.sqrt(dx*dx + dy*dy) < PLAYER_SIZE + o.r) {
+        o.collected = true;
+        score += 5;
+        scoreEl.textContent = score;
+        for (let i = 0; i < 12; i++) {
+          particles.push({
+            x: o.x, y: o.y,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.5) * 6,
+            life: 25 + Math.random() * 15,
+            maxLife: 40,
+            color: '#ffd93d',
+            size: Math.random() * 3 + 2
+          });
+        }
+      }
+    }
+  }
+  orbs = orbs.filter(o => o.x > -20 && !o.collected);
+
+  // Stars
+  for (let s of stars) {
+    s.x -= s.speed * speedMult;
+    if (s.x < 0) { s.x = W; s.y = Math.random() * H; }
+  }
+
+  // Particles
+  for (let p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.96;
+    p.vy *= 0.96;
+    p.life--;
+  }
+  particles = particles.filter(p => p.life > 0);
+
+  // Collision
+  if (player.invuln <= 0) {
+    for (let o of obstacles) {
+      if (player.x + PLAYER_SIZE > o.x && player.x - PLAYER_SIZE < o.x + o.w &&
+          player.y + PLAYER_SIZE > o.y && player.y - PLAYER_SIZE < o.y + o.h) {
+        gameOver();
+        return;
+      }
+    }
+  } else {
+    player.invuln--;
+  }
+}
+
+function draw() {
+  // Background
+  ctx.fillStyle = '#0a0a0f';
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  for (let s of stars) {
+    ctx.globalAlpha = s.alpha;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.s, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Floor/Ceiling neon lines
+  const grad1 = ctx.createLinearGradient(0, 0, W, 0);
+  grad1.addColorStop(0, '#6c5ce7');
+  grad1.addColorStop(0.5, '#00d4ff');
+  grad1.addColorStop(1, '#39ff14');
+
+  ctx.fillStyle = 'rgba(108,92,231,0.05)';
+  ctx.fillRect(0, 0, W, FLOOR_H);
+  ctx.fillRect(0, H - FLOOR_H, W, FLOOR_H);
+
+  ctx.strokeStyle = grad1;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#6c5ce7';
+  ctx.shadowBlur = 12;
+  ctx.beginPath();
+  ctx.moveTo(0, FLOOR_H); ctx.lineTo(W, FLOOR_H);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, H - FLOOR_H); ctx.lineTo(W, H - FLOOR_H);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Grid lines on floor/ceiling
+  ctx.strokeStyle = 'rgba(108,92,231,0.1)';
+  ctx.lineWidth = 1;
+  const gridOffset = (frameCount * 3 * speedMult) % 40;
+  for (let x = -gridOffset; x < W; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, FLOOR_H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, H - FLOOR_H); ctx.lineTo(x, H); ctx.stroke();
+  }
+
+  // Obstacles
+  for (let o of obstacles) {
+    const oGrad = ctx.createLinearGradient(o.x, o.y, o.x + o.w, o.y + o.h);
+    oGrad.addColorStop(0, 'rgba(255,107,107,0.8)');
+    oGrad.addColorStop(1, 'rgba(108,92,231,0.8)');
+    ctx.fillStyle = oGrad;
+    ctx.shadowColor = '#ff6b6b';
+    ctx.shadowBlur = 15;
+    ctx.fillRect(o.x, o.y, o.w, o.h);
+    ctx.shadowBlur = 0;
+
+    // Edge glow
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(o.x, o.y, o.w, o.h);
+  }
+
+  // Orbs
+  for (let o of orbs) {
+    if (o.collected) continue;
+    const pulse = Math.sin(o.pulse) * 0.3 + 0.7;
+    ctx.shadowColor = '#ffd93d';
+    ctx.shadowBlur = 20 * pulse;
+    ctx.fillStyle = `rgba(255,217,61,${pulse})`;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, o.r * (0.8 + pulse * 0.2), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Inner spark
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Player trail
+  for (let i = 0; i < player.trail.length; i++) {
+    const t = player.trail[i];
+    const alpha = i / player.trail.length * 0.4;
+    const size = PLAYER_SIZE * (i / player.trail.length) * 0.6;
+    ctx.fillStyle = player.gravDir === 1
+      ? `rgba(0,212,255,${alpha})`
+      : `rgba(255,107,107,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Player
+  const pColor = player.gravDir === 1 ? '#00d4ff' : '#ff6b6b';
+  ctx.shadowColor = pColor;
+  ctx.shadowBlur = 25;
+  ctx.fillStyle = pColor;
+  ctx.beginPath();
+
+  // Diamond shape
+  const px = player.x, py = player.y, ps = PLAYER_SIZE;
+  ctx.moveTo(px, py - ps);
+  ctx.lineTo(px + ps * 0.7, py);
+  ctx.lineTo(px, py + ps);
+  ctx.lineTo(px - ps * 0.7, py);
+  ctx.closePath();
+  ctx.fill();
+
+  // Inner glow
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(px, py, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Gravity indicator arrow
+  ctx.fillStyle = `rgba(255,255,255,0.3)`;
+  ctx.beginPath();
+  const arrowY = py + player.gravDir * 20;
+  ctx.moveTo(px - 5, arrowY - player.gravDir * 5);
+  ctx.lineTo(px + 5, arrowY - player.gravDir * 5);
+  ctx.lineTo(px, arrowY + player.gravDir * 3);
+  ctx.closePath();
+  ctx.fill();
+
+  // Particles
+  for (let p of particles) {
+    const alpha = p.life / p.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
+function gameOver() {
+  running = false;
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('gravdash_best', bestScore);
+    bestEl.textContent = bestScore;
+  }
+  // Death particles
+  for (let i = 0; i < 30; i++) {
+    particles.push({
+      x: player.x, y: player.y,
+      vx: (Math.random() - 0.5) * 10,
+      vy: (Math.random() - 0.5) * 10,
+      life: 30 + Math.random() * 20,
+      maxLife: 50,
+      color: ['#ff6b6b', '#ffd93d', '#00d4ff', '#6c5ce7'][Math.floor(Math.random() * 4)],
+      size: Math.random() * 4 + 2
+    });
+  }
+  // Animate remaining particles then show overlay
+  let deathFrames = 0;
+  function deathAnim() {
+    ctx.fillStyle = 'rgba(10,10,15,0.1)';
+    ctx.fillRect(0, 0, W, H);
+    for (let p of particles) {
+      p.x += p.vx; p.y += p.vy;
+      p.vx *= 0.95; p.vy *= 0.95;
+      p.life--;
+      const alpha = p.life / p.maxLife;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    particles = particles.filter(p => p.life > 0);
+    deathFrames++;
+    if (deathFrames < 40) {
+      requestAnimationFrame(deathAnim);
+    } else {
+      showOverlay();
+    }
+  }
+  deathAnim();
+}
+
+function showOverlay() {
+  finalScoreEl.style.display = 'block';
+  finalScoreEl.textContent = `Score: ${score}`;
+  finalBestEl.style.display = 'block';
+  finalBestEl.textContent = `Best: ${bestScore}`;
+  startBtn.textContent = 'PLAY AGAIN';
+  overlay.classList.remove('hidden');
+}
+
+function gameLoop() {
+  if (!running) return;
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+startBtn.addEventListener('click', () => {
+  overlay.classList.add('hidden');
+  init();
+  running = true;
+  gameLoop();
+});
+
+// Initial star draw
+initStars();
+draw();
+</script>
+</body>
+</html>
