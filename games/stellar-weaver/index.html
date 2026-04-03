@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Stellar Weaver — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #020010;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+a.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #4040aa;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  transition: color 0.2s;
+}
+a.back-link:hover { color: #00d4ff; }
+
+.hud {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 420px;
+  padding: 40px 12px 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  z-index: 10;
+  position: relative;
+}
+.hud-score { color: #a78bfa; }
+.hud-combo { color: #f472b6; }
+.hud-time { color: #67e8f9; }
+
+canvas {
+  display: block;
+  margin: 0 auto;
+  border-radius: 12px;
+  touch-action: none;
+}
+
+#start-screen, #end-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2,0,16,0.94);
+  z-index: 50;
+  gap: 14px;
+}
+
+#end-screen { display: none; }
+
+.title {
+  font-size: 1.8rem;
+  font-weight: bold;
+  letter-spacing: 0.15em;
+  background: linear-gradient(90deg, #a78bfa, #67e8f9, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.subtitle {
+  font-size: 0.8rem;
+  color: #888;
+  letter-spacing: 0.1em;
+  text-align: center;
+  max-width: 300px;
+}
+
+.btn {
+  margin-top: 10px;
+  padding: 12px 36px;
+  font-size: 0.85rem;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #fff;
+  background: linear-gradient(135deg, #7c3aed, #06b6d4);
+  border: none;
+  border-radius: 24px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.btn:hover { transform: scale(1.06); box-shadow: 0 0 20px rgba(6,182,212,0.5); }
+
+.final-score { font-size: 2rem; color: #a78bfa; font-weight: bold; }
+.final-combo { font-size: 1rem; color: #f472b6; }
+.final-rating { font-size: 1.4rem; margin-top: 4px; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+
+<div class="hud">
+  <span class="hud-score">Score: <span id="score">0</span></span>
+  <span class="hud-combo">Chain: <span id="combo">0</span>x</span>
+  <span class="hud-time">Time: <span id="timer">60</span></span>
+</div>
+
+<canvas id="game"></canvas>
+
+<div id="start-screen">
+  <div class="title">🌌 STELLAR WEAVER</div>
+  <div class="subtitle">Connect the glowing stars to weave constellations</div>
+  <div class="subtitle" style="color:#666; font-size:0.7rem;">Click/tap stars in sequence — chain them before they fade</div>
+  <button class="btn" id="start-btn">WEAVE</button>
+</div>
+
+<div id="end-screen">
+  <div class="title">COSMOS REPORT</div>
+  <div class="final-score" id="final-score">0</div>
+  <div class="final-combo" id="final-combo">Longest Chain: 0</div>
+  <div class="final-rating" id="final-rating">🌟</div>
+  <div id="final-stats" style="font-size:0.7rem; color:#888; letter-spacing:0.08em;"></div>
+  <button class="btn" id="restart-btn">WEAVE AGAIN</button>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// --- Sizing ---
+let W, H;
+function resize() {
+  W = Math.min(window.innerWidth, 420);
+  H = Math.min(window.innerHeight - 60, 680);
+  canvas.width = W;
+  canvas.height = H;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- Constants ---
+const STAR_COLORS = [
+  { h: 270, name: 'violet',  hex: '#a78bfa' },
+  { h: 190, name: 'cyan',    hex: '#67e8f9' },
+  { h: 330, name: 'pink',    hex: '#f472b6' },
+  { h: 45,  name: 'gold',    hex: '#fbbf24' },
+  { h: 150, name: 'emerald', hex: '#34d399' },
+];
+
+// --- State ---
+let score = 0, combo = 0, maxCombo = 0, bestScore = +(localStorage.getItem('sw-best') || 0);
+let stars = [], particles = [], trails = [], bgStars = [], nebulaPulse = 0;
+let running = false, gameOver = false;
+let timeLeft = 60, lastTime = 0;
+let constellationsComplete = 0, totalStarsHit = 0, totalStarsMissed = 0;
+let currentChain = []; // stars connected in current drag/click sequence
+let dragging = false;
+let activeColor = null; // color index of current chain
+let spawnTimer = 0;
+let difficulty = 1;
+let flashAlpha = 0;
+
+// --- Background stars (static starfield) ---
+function initBgStars() {
+  bgStars = [];
+  for (let i = 0; i < 120; i++) {
+    bgStars.push({
+      x: Math.random() * 500,
+      y: Math.random() * 800,
+      r: 0.3 + Math.random() * 1.2,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: 0.5 + Math.random() * 2,
+      bright: 0.3 + Math.random() * 0.7
+    });
+  }
+}
+initBgStars();
+
+// --- Star class ---
+function spawnStar() {
+  const margin = 50;
+  const colorIdx = Math.floor(Math.random() * STAR_COLORS.length);
+  const x = margin + Math.random() * (W - margin * 2);
+  const y = margin + Math.random() * (H - margin * 2);
+  
+  // Don't spawn too close to existing stars
+  for (const s of stars) {
+    const dx = s.x - x, dy = s.y - y;
+    if (Math.sqrt(dx*dx + dy*dy) < 45) return;
+  }
+  
+  const lifespan = 4000 + Math.random() * 3000 - difficulty * 200;
+  stars.push({
+    x, y,
+    colorIdx,
+    radius: 8 + Math.random() * 4,
+    life: 1,
+    maxLife: Math.max(2000, lifespan),
+    age: 0,
+    pulse: Math.random() * Math.PI * 2,
+    connected: false,
+    fadeIn: 0,
+    glowRings: 2 + Math.floor(Math.random() * 2)
+  });
+}
+
+// --- Particles ---
+function burstParticles(x, y, color, count, spread) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = spread * (0.5 + Math.random());
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 1 + Math.random() * 3,
+      color,
+      life: 1,
+      decay: 0.008 + Math.random() * 0.02,
+      gravity: 0.01 + Math.random() * 0.02
+    });
+  }
+}
+
+function nebulaExplosion(x, y, colorIdx) {
+  const c = STAR_COLORS[colorIdx];
+  // Big nebula burst
+  for (let i = 0; i < 50; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 0.3 + Math.random() * 2;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 3 + Math.random() * 8,
+      color: `hsla(${c.h}, 80%, ${50 + Math.random() * 30}%, 0.6)`,
+      life: 1,
+      decay: 0.003 + Math.random() * 0.008,
+      gravity: 0,
+      nebula: true
+    });
+  }
+  // Sparks
+  burstParticles(x, y, c.hex, 20, 5);
+}
+
+// --- Trail ---
+function addTrail(x1, y1, x2, y2, colorIdx) {
+  const c = STAR_COLORS[colorIdx];
+  trails.push({
+    x1, y1, x2, y2,
+    color: c.hex,
+    h: c.h,
+    life: 1,
+    decay: 0.008
+  });
+  // Trail sparkles
+  const dx = x2 - x1, dy = y2 - y1;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  const steps = Math.floor(dist / 12);
+  for (let i = 0; i < steps; i++) {
+    const t = i / steps;
+    particles.push({
+      x: x1 + dx * t + (Math.random() - 0.5) * 8,
+      y: y1 + dy * t + (Math.random() - 0.5) * 8,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5 - 0.2,
+      r: 1 + Math.random() * 2,
+      color: `hsla(${c.h}, 80%, 70%, 0.8)`,
+      life: 1,
+      decay: 0.01 + Math.random() * 0.02,
+      gravity: -0.01
+    });
+  }
+}
+
+// --- Hit detection ---
+function getStarAt(px, py) {
+  let best = null, bestDist = 35;
+  for (const s of stars) {
+    if (s.connected || s.life <= 0) continue;
+    const dx = s.x - px, dy = s.y - py;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = s;
+    }
+  }
+  return best;
+}
+
+// --- Connect star ---
+function connectStar(star) {
+  if (star.connected) return;
+  
+  if (currentChain.length === 0) {
+    // Start a new chain
+    activeColor = star.colorIdx;
+    star.connected = true;
+    currentChain.push(star);
+    burstParticles(star.x, star.y, STAR_COLORS[star.colorIdx].hex, 10, 2);
+    totalStarsHit++;
+  } else if (star.colorIdx === activeColor) {
+    // Continue chain — same color
+    const prev = currentChain[currentChain.length - 1];
+    star.connected = true;
+    currentChain.push(star);
+    addTrail(prev.x, prev.y, star.x, star.y, activeColor);
+    burstParticles(star.x, star.y, STAR_COLORS[star.colorIdx].hex, 12, 2.5);
+    totalStarsHit++;
+    
+    // Score
+    combo = currentChain.length;
+    const chainBonus = combo * combo * 10;
+    score += chainBonus;
+    document.getElementById('score').textContent = score;
+    document.getElementById('combo').textContent = combo;
+    
+    if (combo >= 3) {
+      nebulaPulse = 1;
+    }
+  }
+}
+
+// --- Complete chain ---
+function completeChain() {
+  if (currentChain.length >= 3) {
+    // Constellation complete!
+    constellationsComplete++;
+    maxCombo = Math.max(maxCombo, currentChain.length);
+    
+    // Bonus for completing constellation
+    const bonus = currentChain.length * 50;
+    score += bonus;
+    document.getElementById('score').textContent = score;
+    
+    // Big celebration
+    const cx = currentChain.reduce((s, st) => s + st.x, 0) / currentChain.length;
+    const cy = currentChain.reduce((s, st) => s + st.y, 0) / currentChain.length;
+    nebulaExplosion(cx, cy, activeColor);
+    flashAlpha = 0.3;
+    
+  } else if (currentChain.length === 1 || currentChain.length === 2) {
+    // Too short — unmark
+    for (const s of currentChain) s.connected = false;
+    combo = 0;
+    document.getElementById('combo').textContent = combo;
+  }
+  
+  currentChain = [];
+  activeColor = null;
+  dragging = false;
+}
+
+// --- Input ---
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches ? e.touches[0] : e;
+  return {
+    x: (touch.clientX - rect.left) * (canvas.width / rect.width),
+    y: (touch.clientY - rect.top) * (canvas.height / rect.height)
+  };
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (!running) return;
+  e.preventDefault();
+  dragging = true;
+  const pos = getPos(e);
+  const star = getStarAt(pos.x, pos.y);
+  if (star) connectStar(star);
+});
+
+canvas.addEventListener('pointermove', e => {
+  if (!running || !dragging) return;
+  e.preventDefault();
+  const pos = getPos(e);
+  const star = getStarAt(pos.x, pos.y);
+  if (star) connectStar(star);
+});
+
+canvas.addEventListener('pointerup', e => {
+  if (!running) return;
+  e.preventDefault();
+  if (dragging) completeChain();
+});
+
+canvas.addEventListener('pointerleave', () => {
+  if (running && dragging) completeChain();
+});
+
+// Prevent scrolling
+canvas.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+// --- Draw ---
+function draw(ts) {
+  // Deep space background
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+  bgGrad.addColorStop(0, '#020010');
+  bgGrad.addColorStop(0.5, '#050020');
+  bgGrad.addColorStop(1, '#0a0018');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, H);
+  
+  // Flash
+  if (flashAlpha > 0) {
+    ctx.fillStyle = `rgba(167, 139, 250, ${flashAlpha})`;
+    ctx.fillRect(0, 0, W, H);
+    flashAlpha *= 0.9;
+    if (flashAlpha < 0.01) flashAlpha = 0;
+  }
+
+  // Background stars
+  for (const s of bgStars) {
+    s.twinkle += s.speed * 0.02;
+    const alpha = s.bright * (0.5 + 0.5 * Math.sin(s.twinkle));
+    ctx.beginPath();
+    ctx.arc(s.x % W, s.y % H, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(200, 210, 255, ${alpha})`;
+    ctx.fill();
+  }
+  
+  // Nebula background pulse
+  if (nebulaPulse > 0.01) {
+    const cx = W / 2, cy = H / 2;
+    const ng = ctx.createRadialGradient(cx, cy, 0, cx, cy, 250);
+    ng.addColorStop(0, `rgba(120, 80, 200, ${nebulaPulse * 0.12})`);
+    ng.addColorStop(0.5, `rgba(60, 20, 120, ${nebulaPulse * 0.06})`);
+    ng.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = ng;
+    ctx.fillRect(0, 0, W, H);
+    nebulaPulse *= 0.96;
+  }
+
+  // Trails
+  for (const t of trails) {
+    ctx.beginPath();
+    ctx.moveTo(t.x1, t.y1);
+    ctx.lineTo(t.x2, t.y2);
+    ctx.strokeStyle = `hsla(${t.h}, 80%, 65%, ${t.life * 0.8})`;
+    ctx.lineWidth = 2 + t.life * 2;
+    ctx.shadowColor = `hsla(${t.h}, 80%, 60%, ${t.life * 0.5})`;
+    ctx.shadowBlur = 15;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // Current chain line (preview)
+  if (currentChain.length >= 1 && dragging) {
+    ctx.setLineDash([4, 8]);
+    for (let i = 0; i < currentChain.length - 1; i++) {
+      const a = currentChain[i], b = currentChain[i+1];
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = STAR_COLORS[activeColor].hex + '88';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  // Stars
+  for (const s of stars) {
+    if (s.life <= 0) continue;
+    const c = STAR_COLORS[s.colorIdx];
+    const fadeAlpha = Math.min(1, s.fadeIn) * s.life;
+    s.pulse += 0.04;
+    
+    const pulseR = s.radius * (1 + 0.15 * Math.sin(s.pulse));
+    
+    // Outer glow rings
+    for (let r = s.glowRings; r >= 0; r--) {
+      const ringR = pulseR + r * 8;
+      const ringAlpha = fadeAlpha * 0.06 * (1 - r / (s.glowRings + 1));
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, ringR, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${c.h}, 80%, 60%, ${ringAlpha})`;
+      ctx.fill();
+    }
+    
+    // Main glow
+    const grd = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, pulseR * 2.5);
+    grd.addColorStop(0, `hsla(${c.h}, 80%, 85%, ${fadeAlpha * 0.9})`);
+    grd.addColorStop(0.3, `hsla(${c.h}, 80%, 60%, ${fadeAlpha * 0.4})`);
+    grd.addColorStop(1, `hsla(${c.h}, 80%, 40%, 0)`);
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, pulseR * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Core
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, pulseR * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${c.h}, 60%, 95%, ${fadeAlpha})`;
+    ctx.fill();
+    
+    // Cross-flare
+    ctx.save();
+    ctx.globalAlpha = fadeAlpha * 0.4;
+    ctx.strokeStyle = `hsla(${c.h}, 80%, 80%, 1)`;
+    ctx.lineWidth = 1;
+    const flareLen = pulseR * 2;
+    ctx.beginPath();
+    ctx.moveTo(s.x - flareLen, s.y);
+    ctx.lineTo(s.x + flareLen, s.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y - flareLen);
+    ctx.lineTo(s.x, s.y + flareLen);
+    ctx.stroke();
+    ctx.restore();
+    
+    // Connected indicator
+    if (s.connected) {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, pulseR + 4, 0, Math.PI * 2);
+      ctx.strokeStyle = `hsla(${c.h}, 80%, 80%, ${fadeAlpha * 0.6})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    
+    // Life indicator (fading ring)
+    if (s.life < 0.4 && !s.connected) {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, pulseR + 12, -Math.PI/2, -Math.PI/2 + Math.PI * 2 * s.life);
+      ctx.strokeStyle = `hsla(0, 80%, 60%, ${(0.4 - s.life) * 2})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+  
+  // Particles
+  for (const p of particles) {
+    ctx.beginPath();
+    const drawR = p.nebula ? p.r * Math.sqrt(p.life) : p.r * p.life;
+    ctx.arc(p.x, p.y, Math.max(0.5, drawR), 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = p.life * (p.nebula ? 0.3 : 0.8);
+    if (!p.nebula) {
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 6;
+    }
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+  
+  // Timer warning
+  if (timeLeft <= 10 && running) {
+    const warn = 0.3 + 0.2 * Math.sin(ts * 0.008);
+    ctx.fillStyle = `rgba(255, 50, 50, ${warn * 0.05})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// --- Game loop ---
+function gameLoop(ts) {
+  if (!running) return;
+  const dt = Math.min(ts - lastTime, 50);
+  lastTime = ts;
+  
+  // Timer
+  timeLeft -= dt / 1000;
+  document.getElementById('timer').textContent = Math.max(0, Math.ceil(timeLeft));
+  
+  if (timeLeft <= 0) {
+    if (dragging) completeChain();
+    endGame();
+    return;
+  }
+  
+  // Difficulty ramp
+  difficulty = 1 + (60 - timeLeft) / 15;
+  
+  // Spawn stars
+  const spawnRate = 800 - difficulty * 80;
+  spawnTimer += dt;
+  if (spawnTimer >= Math.max(300, spawnRate) && stars.filter(s => s.life > 0 && !s.connected).length < 10) {
+    spawnTimer = 0;
+    spawnStar();
+  }
+  
+  // Update stars
+  for (const s of stars) {
+    if (s.life <= 0) continue;
+    s.age += dt;
+    s.fadeIn = Math.min(1, s.fadeIn + dt / 400);
+    if (!s.connected) {
+      s.life = Math.max(0, 1 - s.age / s.maxLife);
+      if (s.life <= 0) {
+        totalStarsMissed++;
+        // Small fade puff
+        burstParticles(s.x, s.y, 'rgba(100,100,150,0.5)', 5, 1);
+      }
+    }
+  }
+  
+  // Clean up dead stars
+  stars = stars.filter(s => s.life > 0 || s.connected);
+  // Remove connected stars that are old
+  stars = stars.filter(s => {
+    if (s.connected && !currentChain.includes(s)) {
+      s.life -= 0.02;
+      return s.life > -0.5;
+    }
+    return true;
+  });
+  
+  // Update particles
+  for (const p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += p.gravity || 0;
+    p.vx *= 0.99;
+    p.vy *= 0.99;
+    p.life -= p.decay;
+  }
+  particles = particles.filter(p => p.life > 0);
+  
+  // Update trails
+  for (const t of trails) {
+    t.life -= t.decay;
+  }
+  trails = trails.filter(t => t.life > 0);
+  
+  draw(ts);
+  requestAnimationFrame(gameLoop);
+}
+
+// --- Start / End ---
+function startGame() {
+  score = 0; combo = 0; maxCombo = 0;
+  stars = []; particles = []; trails = [];
+  currentChain = []; activeColor = null; dragging = false;
+  constellationsComplete = 0; totalStarsHit = 0; totalStarsMissed = 0;
+  timeLeft = 60; spawnTimer = 0; difficulty = 1;
+  nebulaPulse = 0; flashAlpha = 0;
+  running = true; gameOver = false;
+  document.getElementById('score').textContent = '0';
+  document.getElementById('combo').textContent = '0';
+  document.getElementById('timer').textContent = '60';
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('end-screen').style.display = 'none';
+  
+  // Spawn initial stars
+  for (let i = 0; i < 5; i++) spawnStar();
+  
+  lastTime = performance.now();
+  requestAnimationFrame(gameLoop);
+}
+
+function endGame() {
+  running = false; gameOver = true;
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('sw-best', bestScore);
+  }
+  
+  document.getElementById('final-score').textContent = score.toLocaleString();
+  document.getElementById('final-combo').textContent = `Longest Chain: ${maxCombo} stars`;
+  
+  let rating = '💀 Lost in Space';
+  if (score >= 5000) rating = '🌟 COSMIC LEGEND';
+  else if (score >= 3000) rating = '⭐ Stellar Master';
+  else if (score >= 1500) rating = '✨ Star Weaver';
+  else if (score >= 500) rating = '🌙 Night Walker';
+  else rating = '💫 Stargazer';
+  document.getElementById('final-rating').textContent = rating;
+  
+  document.getElementById('final-stats').textContent = 
+    `Constellations: ${constellationsComplete} | Stars Hit: ${totalStarsHit} | Faded: ${totalStarsMissed}`;
+  
+  document.getElementById('end-screen').style.display = 'flex';
+}
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('restart-btn').addEventListener('click', startGame);
+
+// Initial draw
+resize();
+draw(0);
+</script>
+</body>
+</html>
