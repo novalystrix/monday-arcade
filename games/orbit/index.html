@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Orbit — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #05050f;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #6c5ce7; }
+#header {
+  text-align: center; margin-bottom: 8px;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #444466;
+}
+#header h1 {
+  font-size: 1.8rem; letter-spacing: 0.2em;
+  background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff, #9b59b6);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+#stats {
+  display: flex; gap: 24px; font-size: 0.8rem; margin-top: 4px;
+  color: #444466; justify-content: center;
+}
+#stats span { color: #9b59b6; }
+canvas { border-radius: 8px; cursor: crosshair; }
+#overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(5,5,15,0.92); z-index: 50;
+  text-align: center;
+}
+#overlay.hidden { display: none; }
+#overlay h2 {
+  font-size: 2.2rem; letter-spacing: 0.15em; margin-bottom: 16px;
+  background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+#overlay p { color: #777; font-size: 0.9rem; margin: 4px 0; }
+#overlay .btn {
+  margin-top: 20px; padding: 12px 32px;
+  background: linear-gradient(135deg, #6c5ce7, #9b59b6);
+  border: none; border-radius: 6px; color: #fff;
+  font-size: 1rem; cursor: pointer; letter-spacing: 0.1em;
+  transition: transform 0.15s;
+}
+#overlay .btn:hover { transform: scale(1.05); }
+#level-text {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  font-size: 2.5rem; letter-spacing: 0.2em; opacity: 0; z-index: 40;
+  background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  pointer-events: none; transition: opacity 0.4s;
+}
+#instructions {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  color: #333; font-size: 0.7rem; letter-spacing: 0.1em; z-index: 10;
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<div id="header">
+  <h1>🪐 ORBIT</h1>
+  <div id="stats">
+    Level <span id="s-level">1</span> &nbsp;|&nbsp;
+    Score <span id="s-score">0</span> &nbsp;|&nbsp;
+    Moons <span id="s-moons">0/0</span> &nbsp;|&nbsp;
+    Lives <span id="s-lives">3</span>
+  </div>
+</div>
+<canvas id="c"></canvas>
+<div id="overlay">
+  <h2>🪐 ORBIT</h2>
+  <p>Slingshot your planet through gravity wells</p>
+  <p>Collect all moons 🌙 to clear each level</p>
+  <p style="color:#555; margin-top:8px">Click & drag to launch · Avoid asteroids</p>
+  <button class="btn" id="start-btn">LAUNCH</button>
+</div>
+<div id="level-text"></div>
+<div id="instructions">click & drag to launch your planet</div>
+<script>
+const $ = id => document.getElementById(id);
+const C = $('c'), ctx = C.getContext('2d');
+const overlay = $('overlay'), levelText = $('level-text');
+
+// --- Sizing ---
+let W, H;
+function resize() {
+  W = Math.min(window.innerWidth - 20, 600);
+  H = Math.min(window.innerHeight - 100, 700);
+  C.width = W; C.height = H;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- State ---
+let level = 1, score = 0, lives = 3, state = 'menu';
+let planet, stars, moons, asteroids, particles, trail;
+let dragStart = null, dragEnd = null;
+const G = 800; // gravity constant
+const MAX_LEVELS = 10;
+
+// --- Colors ---
+const PLANET_COLORS = ['#4d96ff','#6bcb77','#ff6b6b','#ffd93d','#9b59b6','#00d2d3','#ff9ff3','#54a0ff','#5f27cd','#01a3a4'];
+const STAR_GLOW = ['#ffd93d','#ff6b6b','#ff9ff3','#00d2d3','#feca57'];
+const MOON_COLOR = '#ffd93d';
+
+// --- Level Generation ---
+function genLevel(n) {
+  const numStars = Math.min(1 + Math.floor(n / 2), 5);
+  const numMoons = 2 + n;
+  const numAsteroids = Math.floor(n * 1.5);
+
+  stars = [];
+  for (let i = 0; i < numStars; i++) {
+    let x, y, tries = 0;
+    do {
+      x = 80 + Math.random() * (W - 160);
+      y = 120 + Math.random() * (H - 240);
+      tries++;
+    } while (tries < 50 && stars.some(s => Math.hypot(s.x - x, s.y - y) < 120));
+    stars.push({
+      x, y,
+      mass: 1200 + Math.random() * 800 + n * 100,
+      r: 14 + Math.random() * 8,
+      color: STAR_GLOW[i % STAR_GLOW.length],
+      pulse: Math.random() * Math.PI * 2
+    });
+  }
+
+  moons = [];
+  for (let i = 0; i < numMoons; i++) {
+    let x, y, tries = 0;
+    do {
+      x = 40 + Math.random() * (W - 80);
+      y = 80 + Math.random() * (H - 160);
+      tries++;
+    } while (tries < 50 && (
+      stars.some(s => Math.hypot(s.x - x, s.y - y) < s.r + 30) ||
+      moons.some(m => Math.hypot(m.x - x, m.y - y) < 30)
+    ));
+    moons.push({ x, y, r: 6, collected: false, glow: Math.random() * Math.PI * 2 });
+  }
+
+  asteroids = [];
+  for (let i = 0; i < numAsteroids; i++) {
+    let x, y, tries = 0;
+    do {
+      x = 60 + Math.random() * (W - 120);
+      y = 100 + Math.random() * (H - 200);
+      tries++;
+    } while (tries < 50 && (
+      stars.some(s => Math.hypot(s.x - x, s.y - y) < s.r + 40) ||
+      moons.some(m => Math.hypot(m.x - x, m.y - y) < 30)
+    ));
+    const speed = 0.3 + Math.random() * 0.6;
+    const angle = Math.random() * Math.PI * 2;
+    asteroids.push({
+      x, y, r: 5 + Math.random() * 6,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      rot: 0, rotSpeed: (Math.random() - 0.5) * 0.05,
+      vertices: Array.from({length: 6 + Math.floor(Math.random()*4)}, (_, j, arr) => {
+        const a = (j / (6 + Math.floor(Math.random()*4))) * Math.PI * 2;
+        return { angle: a + (Math.random()-0.5)*0.3, dist: 0.7 + Math.random()*0.5 };
+      })
+    });
+  }
+
+  planet = {
+    x: W / 2, y: H - 50,
+    vx: 0, vy: 0,
+    r: 8, launched: false,
+    color: PLANET_COLORS[(n - 1) % PLANET_COLORS.length]
+  };
+  trail = [];
+  particles = [];
+}
+
+// --- Particles ---
+function spawnParticles(x, y, color, count, speed) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd = speed * (0.5 + Math.random());
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * spd,
+      vy: Math.sin(angle) * spd,
+      life: 1,
+      decay: 0.015 + Math.random() * 0.02,
+      r: 1.5 + Math.random() * 2.5,
+      color
+    });
+  }
+}
+
+// --- Drawing ---
+function drawStarfield() {
+  // Static stars in background
+  if (!drawStarfield.cache) {
+    drawStarfield.cache = [];
+    for (let i = 0; i < 120; i++) {
+      drawStarfield.cache.push({
+        x: Math.random() * 600,
+        y: Math.random() * 700,
+        r: Math.random() * 1.2,
+        a: 0.2 + Math.random() * 0.5
+      });
+    }
+  }
+  drawStarfield.cache.forEach(s => {
+    ctx.globalAlpha = s.a;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(s.x % W, s.y % H, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawGravityStar(s, t) {
+  const pulse = 1 + Math.sin(t * 2 + s.pulse) * 0.08;
+  const r = s.r * pulse;
+
+  // Glow layers
+  for (let i = 4; i > 0; i--) {
+    const gr = r + i * 12;
+    const grad = ctx.createRadialGradient(s.x, s.y, r * 0.3, s.x, s.y, gr);
+    grad.addColorStop(0, s.color + '30');
+    grad.addColorStop(1, s.color + '00');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, gr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Core
+  const coreGrad = ctx.createRadialGradient(s.x - r*0.3, s.y - r*0.3, r*0.1, s.x, s.y, r);
+  coreGrad.addColorStop(0, '#fff');
+  coreGrad.addColorStop(0.4, s.color);
+  coreGrad.addColorStop(1, s.color + '80');
+  ctx.fillStyle = coreGrad;
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawMoon(m, t) {
+  if (m.collected) return;
+  const glow = 0.6 + Math.sin(t * 3 + m.glow) * 0.3;
+
+  // Glow
+  const grad = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r * 4);
+  grad.addColorStop(0, MOON_COLOR + '40');
+  grad.addColorStop(1, MOON_COLOR + '00');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(m.x, m.y, m.r * 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Moon body
+  ctx.globalAlpha = glow;
+  ctx.fillStyle = MOON_COLOR;
+  ctx.beginPath();
+  ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Crescent shadow
+  ctx.fillStyle = '#c8a800';
+  ctx.beginPath();
+  ctx.arc(m.x + 2, m.y - 1, m.r * 0.7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+function drawAsteroid(a) {
+  ctx.save();
+  ctx.translate(a.x, a.y);
+  ctx.rotate(a.rot);
+  ctx.fillStyle = '#555';
+  ctx.strokeStyle = '#777';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  a.vertices.forEach((v, i) => {
+    const x = Math.cos(v.angle) * a.r * v.dist;
+    const y = Math.sin(v.angle) * a.r * v.dist;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlanet(p, t) {
+  // Trail
+  ctx.lineWidth = 2;
+  for (let i = 1; i < trail.length; i++) {
+    const alpha = i / trail.length * 0.6;
+    ctx.strokeStyle = p.color + Math.floor(alpha * 255).toString(16).padStart(2, '0');
+    ctx.beginPath();
+    ctx.moveTo(trail[i-1].x, trail[i-1].y);
+    ctx.lineTo(trail[i].x, trail[i].y);
+    ctx.stroke();
+  }
+
+  // Glow
+  const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 3);
+  grad.addColorStop(0, p.color + '50');
+  grad.addColorStop(1, p.color + '00');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.r * 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body
+  const bodyGrad = ctx.createRadialGradient(p.x - p.r*0.3, p.y - p.r*0.3, p.r*0.1, p.x, p.y, p.r);
+  bodyGrad.addColorStop(0, '#fff');
+  bodyGrad.addColorStop(0.5, p.color);
+  bodyGrad.addColorStop(1, p.color + 'aa');
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawSlingshot() {
+  if (!dragStart || !dragEnd) return;
+  const dx = dragStart.x - dragEnd.x;
+  const dy = dragStart.y - dragEnd.y;
+  const len = Math.hypot(dx, dy);
+  const maxLen = 200;
+  const clamped = Math.min(len, maxLen);
+  const nx = dx / (len || 1) * clamped;
+  const ny = dy / (len || 1) * clamped;
+
+  // Direction arrow
+  ctx.strokeStyle = '#ffffff40';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 6]);
+  ctx.beginPath();
+  ctx.moveTo(planet.x, planet.y);
+  ctx.lineTo(planet.x + nx, planet.y + ny);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Power indicator
+  const power = clamped / maxLen;
+  const powerColor = power < 0.33 ? '#6bcb77' : power < 0.66 ? '#ffd93d' : '#ff6b6b';
+  ctx.fillStyle = powerColor;
+  ctx.fillRect(W - 30, H - 20 - power * 100, 12, power * 100);
+  ctx.strokeStyle = '#333';
+  ctx.strokeRect(W - 30, H - 120, 12, 100);
+
+  // Trajectory preview (simplified, no gravity)
+  ctx.fillStyle = '#ffffff20';
+  for (let i = 1; i <= 8; i++) {
+    ctx.beginPath();
+    ctx.arc(planet.x + nx * i * 0.15, planet.y + ny * i * 0.15, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+// --- Physics ---
+function updatePlanet(dt) {
+  if (!planet.launched) return;
+
+  // Gravity from stars
+  stars.forEach(s => {
+    const dx = s.x - planet.x;
+    const dy = s.y - planet.y;
+    const dist = Math.max(Math.hypot(dx, dy), 20);
+    const force = G * s.mass / (dist * dist);
+    planet.vx += (dx / dist) * force * dt;
+    planet.vy += (dy / dist) * force * dt;
+  });
+
+  planet.x += planet.vx * dt;
+  planet.y += planet.vy * dt;
+
+  // Trail
+  trail.push({ x: planet.x, y: planet.y });
+  if (trail.length > 80) trail.shift();
+
+  // Emit trail particles
+  if (Math.random() < 0.3) {
+    spawnParticles(planet.x, planet.y, planet.color, 1, 0.3);
+  }
+
+  // Collect moons
+  moons.forEach(m => {
+    if (!m.collected && Math.hypot(m.x - planet.x, m.y - planet.y) < planet.r + m.r + 4) {
+      m.collected = true;
+      score += 100 * level;
+      spawnParticles(m.x, m.y, MOON_COLOR, 20, 2);
+    }
+  });
+
+  // Hit asteroids
+  for (const a of asteroids) {
+    if (Math.hypot(a.x - planet.x, a.y - planet.y) < planet.r + a.r) {
+      spawnParticles(planet.x, planet.y, '#ff6b6b', 30, 3);
+      loseLife();
+      return;
+    }
+  }
+
+  // Hit stars
+  for (const s of stars) {
+    if (Math.hypot(s.x - planet.x, s.y - planet.y) < planet.r + s.r) {
+      spawnParticles(planet.x, planet.y, s.color, 40, 3);
+      loseLife();
+      return;
+    }
+  }
+
+  // Out of bounds
+  if (planet.x < -50 || planet.x > W + 50 || planet.y < -50 || planet.y > H + 50) {
+    loseLife();
+  }
+}
+
+function updateAsteroids(dt) {
+  asteroids.forEach(a => {
+    a.x += a.vx;
+    a.y += a.vy;
+    a.rot += a.rotSpeed;
+
+    // Bounce off walls
+    if (a.x < a.r || a.x > W - a.r) a.vx *= -1;
+    if (a.y < a.r || a.y > H - a.r) a.vy *= -1;
+    a.x = Math.max(a.r, Math.min(W - a.r, a.x));
+    a.y = Math.max(a.r, Math.min(H - a.r, a.y));
+  });
+}
+
+function updateParticles() {
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= p.decay;
+  });
+  particles = particles.filter(p => p.life > 0);
+}
+
+function loseLife() {
+  lives--;
+  if (lives <= 0) {
+    state = 'gameover';
+    showOverlay('GAME OVER', `Final Score: ${score}`, 'RETRY');
+  } else {
+    // Reset planet position
+    planet.x = W / 2;
+    planet.y = H - 50;
+    planet.vx = 0;
+    planet.vy = 0;
+    planet.launched = false;
+    trail = [];
+  }
+}
+
+function checkLevelClear() {
+  if (moons.every(m => m.collected)) {
+    score += 500 * level;
+    if (level >= MAX_LEVELS) {
+      state = 'win';
+      showOverlay('YOU WIN!', `Final Score: ${score}`, 'PLAY AGAIN');
+    } else {
+      level++;
+      flashLevel();
+      genLevel(level);
+    }
+  }
+}
+
+function flashLevel(cb) {
+  levelText.textContent = `LEVEL ${level}`;
+  levelText.style.opacity = 1;
+  setTimeout(() => { levelText.style.opacity = 0; }, 1200);
+}
+
+// --- UI ---
+function updateHUD() {
+  $('s-level').textContent = level;
+  $('s-score').textContent = score;
+  $('s-moons').textContent = `${moons.filter(m=>m.collected).length}/${moons.length}`;
+  $('s-lives').textContent = lives;
+}
+
+function showOverlay(title, sub, btn) {
+  overlay.classList.remove('hidden');
+  overlay.querySelector('h2').textContent = title;
+  overlay.querySelectorAll('p').forEach((p, i) => {
+    if (i === 0) p.textContent = sub;
+    else p.style.display = 'none';
+  });
+  $('start-btn').textContent = btn;
+}
+
+function hideOverlay() {
+  overlay.classList.add('hidden');
+  overlay.querySelectorAll('p').forEach(p => p.style.display = '');
+}
+
+// --- Input ---
+function getPos(e) {
+  const rect = C.getBoundingClientRect();
+  const touch = e.touches ? e.touches[0] : e;
+  return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+}
+
+C.addEventListener('mousedown', e => { if (state === 'playing' && !planet.launched) dragStart = getPos(e); });
+C.addEventListener('touchstart', e => { e.preventDefault(); if (state === 'playing' && !planet.launched) dragStart = getPos(e); });
+
+C.addEventListener('mousemove', e => { if (dragStart) dragEnd = getPos(e); });
+C.addEventListener('touchmove', e => { e.preventDefault(); if (dragStart) dragEnd = getPos(e); });
+
+function launchPlanet() {
+  if (!dragStart || !dragEnd) { dragStart = dragEnd = null; return; }
+  const dx = dragStart.x - dragEnd.x;
+  const dy = dragStart.y - dragEnd.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 10) { dragStart = dragEnd = null; return; }
+  const maxLen = 200;
+  const clamped = Math.min(len, maxLen);
+  const power = clamped / maxLen * 6;
+  planet.vx = (dx / len) * power * 60;
+  planet.vy = (dy / len) * power * 60;
+  planet.launched = true;
+  dragStart = dragEnd = null;
+}
+
+C.addEventListener('mouseup', launchPlanet);
+C.addEventListener('touchend', e => { e.preventDefault(); launchPlanet(); });
+
+$('start-btn').addEventListener('click', () => {
+  level = 1; score = 0; lives = 3;
+  genLevel(level);
+  hideOverlay();
+  state = 'playing';
+  flashLevel();
+});
+
+// --- Main Loop ---
+let lastTime = 0;
+function loop(time) {
+  const dt = Math.min((time - lastTime) / 1000, 0.05);
+  lastTime = time;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Background nebula
+  const nebula = ctx.createRadialGradient(W/2, H/2, 50, W/2, H/2, W);
+  nebula.addColorStop(0, '#0d0d2b');
+  nebula.addColorStop(0.5, '#08081a');
+  nebula.addColorStop(1, '#05050f');
+  ctx.fillStyle = nebula;
+  ctx.fillRect(0, 0, W, H);
+
+  drawStarfield();
+
+  if (state === 'playing') {
+    const t = time / 1000;
+
+    stars.forEach(s => drawGravityStar(s, t));
+    moons.forEach(m => drawMoon(m, t));
+    asteroids.forEach(a => drawAsteroid(a));
+    drawPlanet(planet, t);
+    drawSlingshot();
+    drawParticles();
+
+    updatePlanet(dt);
+    updateAsteroids(dt);
+    updateParticles();
+    checkLevelClear();
+    updateHUD();
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
