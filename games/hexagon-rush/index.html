@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Hexagon Rush — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040dd;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+.back-link:hover { color: #a070ff; }
+canvas { display: block; touch-action: none; }
+#ui-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  pointer-events: none;
+}
+#ui-overlay.active { pointer-events: auto; }
+.title {
+  font-size: 42px;
+  font-weight: bold;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  text-shadow: 0 0 30px #a040ff, 0 0 60px #6020cc;
+}
+.subtitle {
+  font-size: 14px;
+  opacity: 0.7;
+  margin-bottom: 30px;
+}
+.score-display {
+  position: fixed;
+  top: 14px;
+  right: 20px;
+  font-size: 18px;
+  letter-spacing: 2px;
+  z-index: 60;
+  text-shadow: 0 0 10px currentColor;
+}
+.best-display {
+  position: fixed;
+  top: 38px;
+  right: 20px;
+  font-size: 12px;
+  opacity: 0.5;
+  z-index: 60;
+}
+.game-over-score {
+  font-size: 60px;
+  font-weight: bold;
+  margin-bottom: 8px;
+}
+.game-over-label {
+  font-size: 14px;
+  opacity: 0.6;
+  margin-bottom: 24px;
+}
+.start-btn {
+  background: none;
+  border: 2px solid #a040ff;
+  color: #fff;
+  padding: 12px 36px;
+  font-size: 16px;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 3px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all 0.2s;
+}
+.start-btn:hover { background: #a040ff33; box-shadow: 0 0 20px #a040ff55; }
+.controls-hint {
+  margin-top: 16px;
+  font-size: 11px;
+  opacity: 0.4;
+}
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+<canvas id="c"></canvas>
+<div class="score-display" id="score">0.00</div>
+<div class="best-display" id="best"></div>
+<div id="ui-overlay" class="active">
+  <div class="title">Hexagon Rush</div>
+  <div class="subtitle">survive the vortex</div>
+  <button class="start-btn" id="startBtn">START</button>
+  <div class="controls-hint">← → or tap sides to move · space to start</div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('ui-overlay');
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const startBtn = document.getElementById('startBtn');
+
+let W, H, cx, cy;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  cx = W / 2;
+  cy = H / 2;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Game state
+const SIDES = 6;
+const TWO_PI = Math.PI * 2;
+const SECTOR = TWO_PI / SIDES;
+
+let state = 'menu'; // menu, playing, dead
+let time = 0;
+let score = 0;
+let bestScore = parseFloat(localStorage.getItem('hexrush_best') || '0');
+let playerAngle = 0;
+let playerSpeed = 0;
+let walls = [];
+let worldRotation = 0;
+let worldRotationSpeed = 1.2;
+let pulsePhase = 0;
+let shakeX = 0, shakeY = 0;
+let particles = [];
+let flashAlpha = 0;
+let hueShift = 0;
+let difficulty = 1;
+
+if (bestScore > 0) bestEl.textContent = `BEST ${bestScore.toFixed(2)}`;
+
+// Wall spawner
+const PLAYER_RADIUS = 60;
+const WALL_SPAWN_DIST = 500;
+const WALL_SPEED_BASE = 3.5;
+const WALL_THICKNESS = 18;
+const MIN_GAP = 2; // minimum sectors open
+
+function spawnWall() {
+  // Pick pattern
+  const openCount = Math.max(MIN_GAP, Math.floor(Math.random() * 3) + 1);
+  const startOpen = Math.floor(Math.random() * SIDES);
+  const segments = [];
+  for (let i = 0; i < SIDES; i++) {
+    const distFromOpen = Math.min(
+      (i - startOpen + SIDES) % SIDES,
+      (startOpen - i + SIDES) % SIDES
+    );
+    if (distFromOpen >= openCount) {
+      segments.push(i);
+    }
+  }
+  if (segments.length === 0) return;
+  walls.push({
+    dist: WALL_SPAWN_DIST + Math.random() * 60,
+    segments,
+    thickness: WALL_THICKNESS,
+    hue: (hueShift + Math.random() * 40) % 360,
+    alpha: 1
+  });
+}
+
+function spawnParticles(x, y, count, hue) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * TWO_PI;
+    const speed = 1 + Math.random() * 4;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: 0.01 + Math.random() * 0.03,
+      size: 1 + Math.random() * 3,
+      hue: hue + Math.random() * 30
+    });
+  }
+}
+
+// Input
+let moveLeft = false, moveRight = false;
+let touchStartX = null;
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'a') moveLeft = true;
+  if (e.key === 'ArrowRight' || e.key === 'd') moveRight = true;
+  if (e.key === ' ' || e.key === 'Enter') {
+    if (state !== 'playing') startGame();
+  }
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'a') moveLeft = false;
+  if (e.key === 'ArrowRight' || e.key === 'd') moveRight = false;
+});
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  if (state !== 'playing') { startGame(); return; }
+  if (t.clientX < W / 2) moveLeft = true;
+  else moveRight = true;
+});
+canvas.addEventListener('touchend', e => {
+  moveLeft = false;
+  moveRight = false;
+});
+
+startBtn.addEventListener('click', () => startGame());
+
+function startGame() {
+  state = 'playing';
+  time = 0;
+  score = 0;
+  playerAngle = 0;
+  playerSpeed = 0;
+  walls = [];
+  worldRotation = 0;
+  worldRotationSpeed = 1.2;
+  particles = [];
+  flashAlpha = 0;
+  difficulty = 1;
+  overlay.classList.remove('active');
+  overlay.innerHTML = '';
+}
+
+function die() {
+  state = 'dead';
+  flashAlpha = 1;
+  shakeX = (Math.random() - 0.5) * 20;
+  shakeY = (Math.random() - 0.5) * 20;
+
+  // Spawn death particles
+  const px = cx + Math.cos(playerAngle + worldRotation) * PLAYER_RADIUS;
+  const py = cy + Math.sin(playerAngle + worldRotation) * PLAYER_RADIUS;
+  spawnParticles(px, py, 40, hueShift);
+
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('hexrush_best', bestScore.toFixed(2));
+  }
+
+  setTimeout(() => {
+    overlay.innerHTML = `
+      <div class="game-over-score">${score.toFixed(2)}</div>
+      <div class="game-over-label">${score > bestScore - 0.01 ? '✦ NEW BEST ✦' : 'SECONDS SURVIVED'}</div>
+      <button class="start-btn" onclick="startGame()">RETRY</button>
+      <div class="controls-hint">tap or press space</div>
+    `;
+    bestEl.textContent = `BEST ${bestScore.toFixed(2)}`;
+    overlay.classList.add('active');
+  }, 800);
+}
+
+// Drawing helpers
+function hexVertex(cx, cy, radius, index, rotation) {
+  const angle = SECTOR * index - Math.PI / 2 + rotation;
+  return {
+    x: cx + radius * Math.cos(angle),
+    y: cy + radius * Math.sin(angle)
+  };
+}
+
+function drawHexRing(x, y, radius, rotation, color, lineWidth, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+  for (let i = 0; i <= SIDES; i++) {
+    const v = hexVertex(x, y, radius, i % SIDES, rotation);
+    if (i === 0) ctx.moveTo(v.x, v.y);
+    else ctx.lineTo(v.x, v.y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawWallSegment(x, y, innerR, outerR, segIndex, rotation, hue, alpha) {
+  const a1 = SECTOR * segIndex - Math.PI / 2 + rotation;
+  const a2 = SECTOR * (segIndex + 1) - Math.PI / 2 + rotation;
+  const cos1 = Math.cos(a1), sin1 = Math.sin(a1);
+  const cos2 = Math.cos(a2), sin2 = Math.sin(a2);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Glow layer
+  ctx.shadowColor = `hsl(${hue}, 100%, 60%)`;
+  ctx.shadowBlur = 20;
+
+  const grad = ctx.createLinearGradient(
+    x + cos1 * innerR, y + sin1 * innerR,
+    x + cos2 * outerR, y + sin2 * outerR
+  );
+  grad.addColorStop(0, `hsla(${hue}, 100%, 65%, 0.9)`);
+  grad.addColorStop(1, `hsla(${hue + 30}, 100%, 50%, 0.9)`);
+  ctx.fillStyle = grad;
+
+  ctx.beginPath();
+  ctx.moveTo(x + cos1 * innerR, y + sin1 * innerR);
+  ctx.lineTo(x + cos1 * outerR, y + sin1 * outerR);
+  ctx.lineTo(x + cos2 * outerR, y + sin2 * outerR);
+  ctx.lineTo(x + cos2 * innerR, y + sin2 * innerR);
+  ctx.closePath();
+  ctx.fill();
+
+  // Edge highlights
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = `hsla(${hue}, 100%, 80%, ${alpha * 0.6})`;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// Main loop
+let lastTime = 0;
+let wallTimer = 0;
+
+function loop(ts) {
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+
+  // Clear
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  const centerX = cx + shakeX;
+  const centerY = cy + shakeY;
+  shakeX *= 0.9;
+  shakeY *= 0.9;
+
+  hueShift = (hueShift + dt * 15) % 360;
+  pulsePhase += dt * 3;
+
+  if (state === 'playing') {
+    time += dt;
+    score = time;
+    scoreEl.textContent = score.toFixed(2);
+    scoreEl.style.color = `hsl(${hueShift}, 80%, 70%)`;
+
+    // Increase difficulty
+    difficulty = 1 + time * 0.04;
+    worldRotationSpeed = 1.2 + Math.sin(time * 0.3) * 0.8 + time * 0.02;
+    if (Math.floor(time * 2) % 8 < 4) worldRotationSpeed *= -1;
+
+    worldRotation += worldRotationSpeed * dt;
+
+    // Player movement
+    const targetSpeed = ((moveLeft ? -1 : 0) + (moveRight ? 1 : 0)) * (4.5 + difficulty * 0.3);
+    playerSpeed += (targetSpeed - playerSpeed) * 8 * dt;
+    playerAngle += playerSpeed * dt;
+
+    // Spawn walls
+    wallTimer -= dt;
+    if (wallTimer <= 0) {
+      spawnWall();
+      wallTimer = Math.max(0.4, 1.2 - time * 0.015);
+    }
+
+    // Move & check walls
+    const wallSpeed = (WALL_SPEED_BASE + difficulty * 0.5);
+    for (let i = walls.length - 1; i >= 0; i--) {
+      const w = walls[i];
+      w.dist -= wallSpeed * 60 * dt;
+
+      // Collision
+      if (w.dist < PLAYER_RADIUS + w.thickness / 2 && w.dist > PLAYER_RADIUS - w.thickness / 2) {
+        // Check if player is in a wall segment
+        let normAngle = ((playerAngle % TWO_PI) + TWO_PI) % TWO_PI;
+        let sector = Math.floor(normAngle / SECTOR);
+        if (w.segments.includes(sector)) {
+          die();
+        }
+      }
+
+      // Passed walls → particles
+      if (w.dist < PLAYER_RADIUS - w.thickness && w.alpha === 1) {
+        w.alpha = 0.99; // mark as passed
+        const px = centerX + Math.cos(playerAngle + worldRotation) * PLAYER_RADIUS;
+        const py = centerY + Math.sin(playerAngle + worldRotation) * PLAYER_RADIUS;
+        spawnParticles(px, py, 6, w.hue);
+      }
+
+      if (w.dist < 20) {
+        w.alpha -= dt * 3;
+        if (w.alpha <= 0) walls.splice(i, 1);
+      }
+    }
+  }
+
+  // ---- DRAW ----
+
+  // Background hex grid (subtle)
+  const bgPulse = 0.08 + Math.sin(pulsePhase) * 0.03;
+  for (let r = 40; r < Math.max(W, H); r += 80) {
+    drawHexRing(centerX, centerY, r, worldRotation, `hsl(${hueShift + 180}, 60%, 30%)`, 0.5, bgPulse);
+  }
+
+  // Center hexagon fill
+  ctx.save();
+  ctx.globalAlpha = 0.15;
+  const centerGrad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, 50);
+  centerGrad.addColorStop(0, `hsl(${hueShift}, 100%, 50%)`);
+  centerGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = centerGrad;
+  ctx.beginPath();
+  for (let i = 0; i < SIDES; i++) {
+    const v = hexVertex(centerX, centerY, 50, i, worldRotation);
+    if (i === 0) ctx.moveTo(v.x, v.y);
+    else ctx.lineTo(v.x, v.y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Inner hex ring
+  drawHexRing(centerX, centerY, PLAYER_RADIUS - 8, worldRotation,
+    `hsl(${hueShift}, 80%, 40%)`, 1.5, 0.4 + Math.sin(pulsePhase * 2) * 0.1);
+
+  // Walls
+  for (const w of walls) {
+    if (w.dist < 0) continue;
+    for (const seg of w.segments) {
+      drawWallSegment(centerX, centerY, w.dist - w.thickness / 2, w.dist + w.thickness / 2,
+        seg, worldRotation, w.hue, Math.min(w.alpha, w.dist / WALL_SPAWN_DIST + 0.3));
+    }
+  }
+
+  // Player cursor
+  if (state === 'playing' || state === 'dead') {
+    const pa = playerAngle + worldRotation;
+    const px = centerX + Math.cos(pa) * PLAYER_RADIUS;
+    const py = centerY + Math.sin(pa) * PLAYER_RADIUS;
+
+    // Trail
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    ctx.shadowColor = `hsl(${hueShift}, 100%, 70%)`;
+    ctx.shadowBlur = 15;
+    ctx.strokeStyle = `hsl(${hueShift}, 100%, 70%)`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let i = 0; i < 12; i++) {
+      const trailA = pa - playerSpeed * 0.01 * i;
+      const tx = centerX + Math.cos(trailA) * PLAYER_RADIUS;
+      const ty = centerY + Math.sin(trailA) * PLAYER_RADIUS;
+      if (i === 0) ctx.moveTo(tx, ty);
+      else ctx.lineTo(tx, ty);
+      ctx.globalAlpha = 0.3 - i * 0.025;
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // Player dot
+    ctx.save();
+    ctx.shadowColor = `hsl(${hueShift + 60}, 100%, 70%)`;
+    ctx.shadowBlur = 25;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(px, py, 6, 0, TWO_PI);
+    ctx.fill();
+
+    // Inner glow
+    ctx.fillStyle = `hsl(${hueShift + 60}, 100%, 80%)`;
+    ctx.beginPath();
+    ctx.arc(px, py, 3, 0, TWO_PI);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= p.decay;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    ctx.save();
+    ctx.globalAlpha = p.life * 0.8;
+    ctx.shadowColor = `hsl(${p.hue}, 100%, 60%)`;
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = `hsl(${p.hue}, 100%, 70%)`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, TWO_PI);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Flash on death
+  if (flashAlpha > 0) {
+    ctx.save();
+    ctx.globalAlpha = flashAlpha;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+    flashAlpha *= 0.92;
+    if (flashAlpha < 0.01) flashAlpha = 0;
+  }
+
+  // Vignette
+  const vignette = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.3, cx, cy, Math.max(W, H) * 0.7);
+  vignette.addColorStop(0, 'transparent');
+  vignette.addColorStop(1, 'rgba(0,0,0,0.6)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, W, H);
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
