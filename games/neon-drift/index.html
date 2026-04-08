@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Neon Drift — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #05050f;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #6c5ce7; }
+#header {
+  text-align: center; margin-bottom: 6px;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #444466;
+}
+#header h1 {
+  font-size: 2rem; letter-spacing: 0.25em;
+  background: linear-gradient(90deg, #ff006e, #fb5607, #ffbe0b, #3a86ff, #8338ec);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  animation: hueShift 4s linear infinite;
+}
+@keyframes hueShift {
+  0% { filter: hue-rotate(0deg); }
+  100% { filter: hue-rotate(360deg); }
+}
+#stats {
+  display: flex; gap: 24px; font-size: 0.8rem; margin-top: 4px;
+  color: #444466; justify-content: center;
+}
+#stats span { color: #ff006e; }
+canvas { border-radius: 8px; }
+#overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(5,5,15,0.92); z-index: 50;
+  text-align: center;
+}
+#overlay.hidden { display: none; }
+#overlay h2 {
+  font-size: 2.4rem; letter-spacing: 0.15em; margin-bottom: 16px;
+  background: linear-gradient(90deg, #ff006e, #fb5607, #ffbe0b, #3a86ff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+#overlay p { color: #666688; margin: 6px; font-size: 0.9rem; }
+#overlay .key { color: #ff006e; font-weight: bold; }
+.btn {
+  margin-top: 20px; padding: 12px 36px; border: 1px solid #ff006e44;
+  background: #ff006e18; color: #ff006e; font-family: inherit;
+  font-size: 1rem; letter-spacing: 0.1em; border-radius: 6px; cursor: pointer;
+  transition: all 0.2s;
+}
+.btn:hover { background: #ff006e33; border-color: #ff006e88; }
+#mobile-controls {
+  display: none; position: fixed; bottom: 20px; left: 0; right: 0;
+  justify-content: center; gap: 20px; z-index: 60;
+}
+.mobile-btn {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: rgba(255,0,110,0.15); border: 2px solid rgba(255,0,110,0.3);
+  color: #ff006e; font-size: 24px; display: flex; align-items: center;
+  justify-content: center; cursor: pointer; transition: all 0.15s;
+}
+.mobile-btn:active { background: rgba(255,0,110,0.35); transform: scale(0.92); }
+@media (pointer: coarse) {
+  #mobile-controls { display: flex; }
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<div id="header">
+  <h1>NEON DRIFT</h1>
+  <div id="stats">
+    Score: <span id="score">0</span> &nbsp;|&nbsp;
+    Drift: <span id="drift-meter">0</span> &nbsp;|&nbsp;
+    Best: <span id="best">0</span> &nbsp;|&nbsp;
+    Level: <span id="level">1</span>
+  </div>
+</div>
+<canvas id="c"></canvas>
+<div id="overlay">
+  <h2>NEON DRIFT</h2>
+  <p>Master the art of the drift.</p>
+  <p><span class="key">← →</span> or <span class="key">A D</span> to steer &nbsp;|&nbsp; <span class="key">↑</span> or <span class="key">W</span> accelerate &nbsp;|&nbsp; <span class="key">SPACE</span> brake/drift</p>
+  <p>Longer drifts = bigger score multipliers ✨</p>
+  <button class="btn" id="startBtn">START</button>
+</div>
+<div id="mobile-controls">
+  <div class="mobile-btn" id="m-left">◀</div>
+  <div class="mobile-btn" id="m-brake">⬇</div>
+  <div class="mobile-btn" id="m-gas">▲</div>
+  <div class="mobile-btn" id="m-right">▶</div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const scoreEl = document.getElementById('score');
+const driftEl = document.getElementById('drift-meter');
+const bestEl = document.getElementById('best');
+const levelEl = document.getElementById('level');
+
+let W, H;
+function resize() {
+  W = canvas.width = Math.min(window.innerWidth - 20, 800);
+  H = canvas.height = Math.min(window.innerHeight - 80, 600);
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- Track generation ---
+function generateTrack(level) {
+  const cx = W / 2, cy = H / 2;
+  const baseR = Math.min(W, H) * 0.32;
+  const points = [];
+  const n = 12 + level * 2;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const r = baseR + Math.sin(a * 3 + level) * (40 + level * 8) + Math.cos(a * 5) * 25;
+    points.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+  }
+  return points;
+}
+
+function catmull(pts, segments = 200) {
+  const result = [];
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const p0 = pts[(i - 1 + n) % n];
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % n];
+    const p3 = pts[(i + 2) % n];
+    const segs = Math.ceil(segments / n);
+    for (let t = 0; t < segs; t++) {
+      const s = t / segs;
+      const s2 = s * s, s3 = s2 * s;
+      result.push({
+        x: 0.5 * (2*p1.x + (-p0.x+p2.x)*s + (2*p0.x-5*p1.x+4*p2.x-p3.x)*s2 + (-p0.x+3*p1.x-3*p2.x+p3.x)*s3),
+        y: 0.5 * (2*p1.y + (-p0.y+p2.y)*s + (2*p0.y-5*p1.y+4*p2.y-p3.y)*s2 + (-p0.y+3*p1.y-3*p2.y+p3.y)*s3)
+      });
+    }
+  }
+  return result;
+}
+
+// --- State ---
+let car, track, smoothTrack, particles, driftParticles, score, best = 0, driftScore, driftActive, level, playing, pickups;
+const keys = {};
+
+function initGame() {
+  level = 1;
+  score = 0;
+  startLevel();
+}
+
+function startLevel() {
+  track = generateTrack(level);
+  smoothTrack = catmull(track, 300);
+  car = {
+    x: smoothTrack[0].x, y: smoothTrack[0].y,
+    angle: Math.atan2(smoothTrack[5].y - smoothTrack[0].y, smoothTrack[5].x - smoothTrack[0].x),
+    speed: 0, drift: 0, driftAngle: 0,
+    trail: []
+  };
+  particles = [];
+  driftParticles = [];
+  driftScore = 0;
+  driftActive = false;
+  
+  // Place pickups along the track
+  pickups = [];
+  for (let i = 0; i < smoothTrack.length; i += Math.floor(smoothTrack.length / (8 + level * 2))) {
+    if (Math.random() > 0.3) {
+      pickups.push({ x: smoothTrack[i].x + (Math.random()-0.5)*40, y: smoothTrack[i].y + (Math.random()-0.5)*40, collected: false, pulse: Math.random() * Math.PI * 2 });
+    }
+  }
+}
+
+// --- Input ---
+document.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// Mobile
+['m-left','m-right','m-gas','m-brake'].forEach(id => {
+  const el = document.getElementById(id);
+  const keyMap = { 'm-left': 'ArrowLeft', 'm-right': 'ArrowRight', 'm-gas': 'ArrowUp', 'm-brake': ' ' };
+  el.addEventListener('touchstart', e => { e.preventDefault(); keys[keyMap[id]] = true; });
+  el.addEventListener('touchend', e => { e.preventDefault(); keys[keyMap[id]] = false; });
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  overlay.classList.add('hidden');
+  playing = true;
+  initGame();
+  requestAnimationFrame(gameLoop);
+});
+
+// --- Physics ---
+function updateCar() {
+  const accel = (keys['ArrowUp'] || keys['w'] || keys['W']) ? 0.18 : 0;
+  const braking = keys[' '];
+  const turnL = keys['ArrowLeft'] || keys['a'] || keys['A'];
+  const turnR = keys['ArrowRight'] || keys['d'] || keys['D'];
+  
+  // Friction
+  if (braking) {
+    car.speed *= 0.96;
+    if (Math.abs(car.speed) > 1.5 && (turnL || turnR)) {
+      driftActive = true;
+      car.drift += (turnL ? -0.04 : 0.04);
+      car.drift = Math.max(-0.7, Math.min(0.7, car.drift));
+    }
+  } else {
+    car.speed += accel;
+    car.drift *= 0.92;
+    if (Math.abs(car.drift) < 0.01) {
+      if (driftActive && driftScore > 10) {
+        // Cash in drift
+        const mult = Math.min(Math.floor(driftScore / 15), 8);
+        score += driftScore * mult;
+        spawnDriftText(car.x, car.y, `×${mult} +${driftScore * mult}`);
+      }
+      driftActive = false;
+      driftScore = 0;
+    }
+  }
+  
+  car.speed = Math.max(0, Math.min(car.speed, 6 + level * 0.3));
+  car.speed *= 0.985;
+  
+  const turnRate = 0.045 / (1 + car.speed * 0.08);
+  if (turnL) car.angle -= turnRate * (1 + Math.abs(car.drift) * 0.8);
+  if (turnR) car.angle += turnRate * (1 + Math.abs(car.drift) * 0.8);
+  
+  const moveAngle = car.angle + car.drift;
+  car.x += Math.cos(moveAngle) * car.speed;
+  car.y += Math.sin(moveAngle) * car.speed;
+  
+  // Wrap
+  if (car.x < -20) car.x = W + 20;
+  if (car.x > W + 20) car.x = -20;
+  if (car.y < -20) car.y = H + 20;
+  if (car.y > H + 20) car.y = -20;
+  
+  // Trail
+  car.trail.push({ x: car.x, y: car.y, age: 0, drifting: driftActive });
+  if (car.trail.length > 120) car.trail.shift();
+  car.trail.forEach(t => t.age++);
+  
+  // Drift scoring
+  if (driftActive) {
+    driftScore += Math.ceil(car.speed);
+    // Drift particles
+    for (let i = 0; i < 3; i++) {
+      driftParticles.push({
+        x: car.x - Math.cos(car.angle) * 10 + (Math.random()-0.5)*8,
+        y: car.y - Math.sin(car.angle) * 10 + (Math.random()-0.5)*8,
+        vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3,
+        life: 40 + Math.random()*30,
+        maxLife: 70, hue: 340 + Math.random()*40
+      });
+    }
+  }
+  
+  // Speed particles
+  if (car.speed > 2) {
+    particles.push({
+      x: car.x - Math.cos(car.angle)*12 + (Math.random()-0.5)*6,
+      y: car.y - Math.sin(car.angle)*12 + (Math.random()-0.5)*6,
+      vx: -Math.cos(car.angle)*car.speed*0.3, vy: -Math.sin(car.angle)*car.speed*0.3,
+      life: 20 + Math.random()*15, maxLife: 35, hue: 200 + Math.random()*60
+    });
+  }
+  
+  // Collect pickups
+  pickups.forEach(p => {
+    if (!p.collected) {
+      const dx = car.x - p.x, dy = car.y - p.y;
+      if (dx*dx + dy*dy < 400) {
+        p.collected = true;
+        score += 50 * level;
+        for (let i = 0; i < 15; i++) {
+          particles.push({
+            x: p.x, y: p.y,
+            vx: (Math.random()-0.5)*6, vy: (Math.random()-0.5)*6,
+            life: 30 + Math.random()*20, maxLife: 50,
+            hue: 50 + Math.random()*30
+          });
+        }
+      }
+    }
+  });
+  
+  // Check level complete
+  if (pickups.length > 0 && pickups.every(p => p.collected)) {
+    level++;
+    startLevel();
+  }
+}
+
+// Drift text popups
+let driftTexts = [];
+function spawnDriftText(x, y, text) {
+  driftTexts.push({ x, y, text, life: 60 });
+}
+
+function updateParticles() {
+  particles = particles.filter(p => {
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.97; p.vy *= 0.97;
+    p.life--;
+    return p.life > 0;
+  });
+  driftParticles = driftParticles.filter(p => {
+    p.x += p.vx; p.y += p.vy;
+    p.life--;
+    return p.life > 0;
+  });
+  driftTexts = driftTexts.filter(t => { t.y -= 1.2; t.life--; return t.life > 0; });
+}
+
+// --- Rendering ---
+let time = 0;
+function draw() {
+  time++;
+  ctx.fillStyle = '#05050f';
+  ctx.fillRect(0, 0, W, H);
+  
+  // Grid background
+  ctx.strokeStyle = 'rgba(50,40,80,0.12)';
+  ctx.lineWidth = 1;
+  const gridSize = 40;
+  for (let x = 0; x < W; x += gridSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  
+  // Draw track (glowing)
+  if (smoothTrack.length > 2) {
+    // Outer glow
+    ctx.save();
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = 'rgba(131,56,236,0.3)';
+    ctx.strokeStyle = 'rgba(131,56,236,0.15)';
+    ctx.lineWidth = 60;
+    ctx.beginPath();
+    ctx.moveTo(smoothTrack[0].x, smoothTrack[0].y);
+    for (let i = 1; i < smoothTrack.length; i++) ctx.lineTo(smoothTrack[i].x, smoothTrack[i].y);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+    
+    // Track lines
+    ctx.strokeStyle = 'rgba(131,56,236,0.35)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 12]);
+    ctx.beginPath();
+    ctx.moveTo(smoothTrack[0].x, smoothTrack[0].y);
+    for (let i = 1; i < smoothTrack.length; i++) ctx.lineTo(smoothTrack[i].x, smoothTrack[i].y);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  
+  // Pickups
+  pickups.forEach(p => {
+    if (p.collected) return;
+    p.pulse += 0.08;
+    const s = 6 + Math.sin(p.pulse) * 2;
+    ctx.save();
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#ffbe0b';
+    ctx.fillStyle = '#ffbe0b';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // Ring
+    ctx.strokeStyle = `rgba(255,190,11,${0.3 + Math.sin(p.pulse)*0.15})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, s + 6 + Math.sin(p.pulse)*3, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  
+  // Trail
+  car.trail.forEach((t, i) => {
+    const alpha = Math.max(0, 1 - t.age / 120);
+    if (t.drifting) {
+      ctx.fillStyle = `rgba(255,0,110,${alpha * 0.6})`;
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = 'rgba(255,0,110,0.4)';
+    } else {
+      ctx.fillStyle = `rgba(58,134,255,${alpha * 0.4})`;
+      ctx.shadowBlur = 4;
+      ctx.shadowColor = 'rgba(58,134,255,0.3)';
+    }
+    const size = 3 * alpha + 1;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+  
+  // Particles
+  particles.forEach(p => {
+    const alpha = p.life / p.maxLife;
+    ctx.fillStyle = `hsla(${p.hue},100%,65%,${alpha * 0.8})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2 * alpha + 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  
+  // Drift particles (extra glow)
+  driftParticles.forEach(p => {
+    const alpha = p.life / p.maxLife;
+    ctx.save();
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = `hsla(${p.hue},100%,55%,0.5)`;
+    ctx.fillStyle = `hsla(${p.hue},100%,70%,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3 * alpha + 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+  
+  // Car
+  ctx.save();
+  ctx.translate(car.x, car.y);
+  ctx.rotate(car.angle + car.drift * 0.5);
+  
+  // Car glow
+  const glowColor = driftActive ? 'rgba(255,0,110,0.5)' : 'rgba(58,134,255,0.4)';
+  ctx.shadowBlur = 25;
+  ctx.shadowColor = glowColor;
+  
+  // Car body
+  ctx.fillStyle = driftActive ? '#ff006e' : '#3a86ff';
+  ctx.beginPath();
+  ctx.moveTo(14, 0);
+  ctx.lineTo(-8, -7);
+  ctx.lineTo(-6, 0);
+  ctx.lineTo(-8, 7);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Car highlights
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath();
+  ctx.moveTo(14, 0);
+  ctx.lineTo(4, -3);
+  ctx.lineTo(4, 3);
+  ctx.closePath();
+  ctx.fill();
+  
+  ctx.restore();
+  
+  // Drift texts
+  driftTexts.forEach(t => {
+    const alpha = t.life / 60;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold 18px "Courier New"';
+    ctx.fillStyle = '#ff006e';
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = '#ff006e';
+    ctx.textAlign = 'center';
+    ctx.fillText(t.text, t.x, t.y);
+    ctx.restore();
+  });
+  
+  // Drift meter bar
+  if (driftActive && driftScore > 0) {
+    const barW = Math.min(driftScore * 0.8, 200);
+    const barX = W/2 - barW/2;
+    const barY = H - 40;
+    ctx.fillStyle = 'rgba(255,0,110,0.2)';
+    ctx.fillRect(barX - 2, barY - 2, barW + 4, 12);
+    const grad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    grad.addColorStop(0, '#ff006e');
+    grad.addColorStop(1, '#fb5607');
+    ctx.fillStyle = grad;
+    ctx.fillRect(barX, barY, barW, 8);
+    ctx.font = '10px "Courier New"';
+    ctx.fillStyle = '#ffbe0b';
+    ctx.textAlign = 'center';
+    ctx.fillText('DRIFT ×' + Math.min(Math.floor(driftScore / 15), 8), W/2, barY - 6);
+  }
+  
+  // Update HUD
+  scoreEl.textContent = score;
+  driftEl.textContent = driftScore;
+  bestEl.textContent = best;
+  levelEl.textContent = level;
+}
+
+function gameLoop() {
+  if (!playing) return;
+  updateCar();
+  updateParticles();
+  draw();
+  if (score > best) best = score;
+  requestAnimationFrame(gameLoop);
+}
+</script>
+</body>
+</html>
