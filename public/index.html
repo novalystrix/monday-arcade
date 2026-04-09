@@ -57,6 +57,7 @@
     <div class="tab active" onclick="showTab('games')">🎮 Games</div>
     <div class="tab" onclick="showTab('reports')">📊 Team Reports</div>
     <div class="tab" onclick="showTab('scores')">📈 Score Trend</div>
+    <div class="tab" onclick="showTab('data')">💾 Data</div>
   </div>
   <div class="container">
     <div id="games-section">
@@ -75,6 +76,30 @@
       <div class="section-title">📈 Score Trend Over Time</div>
       <canvas id="score-chart" width="1060" height="400" style="background:#16161f;border-radius:12px;border:1px solid #2a2a3a;padding:20px;"></canvas>
     </div>
+    <div id="data-section" class="hidden">
+      <div class="section-title">💾 Import / Export Save Data</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;">
+        <div class="report-card" style="flex:1;min-width:280px;">
+          <h3 style="margin-bottom:12px;color:#a78bfa;">Export</h3>
+          <p style="color:#888;font-size:0.9rem;margin-bottom:16px;">Download all your high scores and game progress as a JSON file. Use it to back up your data or transfer it to another device.</p>
+          <div id="export-preview" style="background:#0a0a0f;border:1px solid #2a2a3a;border-radius:8px;padding:12px;margin-bottom:16px;max-height:200px;overflow-y:auto;font-family:'Courier New',monospace;font-size:0.8rem;color:#39ff14;white-space:pre-wrap;"></div>
+          <button onclick="exportData()" style="padding:10px 24px;background:#6c5ce7;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;font-size:0.9rem;">⬇ Download JSON</button>
+          <button onclick="copyData()" style="padding:10px 24px;background:#2a2a3a;color:#e0e0e0;border:1px solid #3a3a4a;border-radius:6px;font-weight:600;cursor:pointer;font-size:0.9rem;margin-left:8px;">📋 Copy</button>
+        </div>
+        <div class="report-card" style="flex:1;min-width:280px;">
+          <h3 style="margin-bottom:12px;color:#a78bfa;">Import</h3>
+          <p style="color:#888;font-size:0.9rem;margin-bottom:16px;">Restore your scores from a previously exported JSON file. This will merge with your current scores, keeping the highest value for each game.</p>
+          <div id="drop-zone" style="border:2px dashed #3a3a4a;border-radius:8px;padding:40px 20px;text-align:center;color:#666;cursor:pointer;transition:all 0.2s;" onclick="document.getElementById('import-file').click()">
+            <div style="font-size:2rem;margin-bottom:8px;">📂</div>
+            <div>Drop a JSON file here or click to browse</div>
+          </div>
+          <input type="file" id="import-file" accept=".json,application/json" style="display:none;" onchange="handleImportFile(event)">
+          <textarea id="import-text" placeholder="...or paste JSON here" style="width:100%;margin-top:12px;padding:12px;background:#0a0a0f;border:1px solid #2a2a3a;border-radius:8px;color:#e0e0e0;font-family:'Courier New',monospace;font-size:0.8rem;resize:vertical;min-height:80px;"></textarea>
+          <button onclick="importData()" style="padding:10px 24px;background:#22c55e;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;font-size:0.9rem;margin-top:12px;">⬆ Import</button>
+          <div id="import-result" style="margin-top:12px;font-size:0.85rem;display:none;padding:10px;border-radius:6px;"></div>
+        </div>
+      </div>
+    </div>
   </div>
   <script>
     function showTab(tab) {
@@ -83,6 +108,7 @@
       event.target.classList.add('active');
       document.getElementById(tab + '-section').classList.remove('hidden');
       if (tab === 'scores') drawChart();
+      if (tab === 'data') refreshExportPreview();
     }
 
     let reportsData = [];
@@ -192,6 +218,138 @@
         ctx.fillText(`#${r.runNumber || i+1}`, x, pad.top+h+20);
       });
     }
+
+    // --- Import / Export ---
+    const SAVE_KEYS = [
+      'asteroid-blaster-best', 'brickbreaker-best', 'cometTrail_best',
+      'gravdash_best', 'hexrush_best', 'rr-best', 'simon-best',
+      'snake-best', 'spacedodge-best', 'sw-best', 'towerstack-best'
+    ];
+    const KEY_LABELS = {
+      'asteroid-blaster-best': 'Asteroid Blaster',
+      'brickbreaker-best': 'Brick Breaker',
+      'cometTrail_best': 'Comet Trail',
+      'gravdash_best': 'Gravity Dash',
+      'hexrush_best': 'Hexagon Rush',
+      'rr-best': 'Rhythm Rings',
+      'simon-best': 'Simon Says',
+      'snake-best': 'Snake',
+      'spacedodge-best': 'Space Dodge',
+      'sw-best': 'Stellar Weaver',
+      'towerstack-best': 'Tower Stack'
+    };
+
+    function gatherSaveData() {
+      const data = { _meta: { version: 1, exportedAt: new Date().toISOString(), source: 'monday-arcade' }, scores: {} };
+      SAVE_KEYS.forEach(k => {
+        const v = localStorage.getItem(k);
+        if (v !== null) data.scores[k] = parseInt(v) || 0;
+      });
+      return data;
+    }
+
+    function refreshExportPreview() {
+      const el = document.getElementById('export-preview');
+      if (!el) return;
+      const data = gatherSaveData();
+      const count = Object.keys(data.scores).length;
+      if (count === 0) {
+        el.textContent = '(no saved scores yet — play some games first!)';
+        el.style.color = '#666';
+      } else {
+        const lines = Object.entries(data.scores).map(([k,v]) => `  ${KEY_LABELS[k] || k}: ${v}`).join('\n');
+        el.textContent = `${count} game(s) with saved scores:\n${lines}`;
+        el.style.color = '#39ff14';
+      }
+    }
+
+    function exportData() {
+      const data = gatherSaveData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `arcade-save-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function copyData() {
+      const data = gatherSaveData();
+      navigator.clipboard.writeText(JSON.stringify(data, null, 2)).then(() => {
+        showImportResult('Copied to clipboard!', 'success');
+      }).catch(() => {
+        showImportResult('Copy failed — try the download button.', 'error');
+      });
+    }
+
+    function showImportResult(msg, type) {
+      const el = document.getElementById('import-result');
+      el.style.display = 'block';
+      el.textContent = msg;
+      el.style.background = type === 'success' ? '#22c55e20' : '#ef444420';
+      el.style.color = type === 'success' ? '#22c55e' : '#ef4444';
+      el.style.border = `1px solid ${type === 'success' ? '#22c55e40' : '#ef444440'}`;
+      setTimeout(() => { el.style.display = 'none'; }, 5000);
+    }
+
+    function processImport(text) {
+      let data;
+      try { data = JSON.parse(text); } catch(e) {
+        showImportResult('Invalid JSON file.', 'error'); return;
+      }
+      if (!data.scores || typeof data.scores !== 'object') {
+        showImportResult('Invalid format — expected { scores: { ... } }', 'error'); return;
+      }
+      let imported = 0, skipped = 0, upgraded = 0;
+      Object.entries(data.scores).forEach(([k, v]) => {
+        if (!SAVE_KEYS.includes(k)) { skipped++; return; }
+        const num = parseInt(v);
+        if (isNaN(num) || num < 0) { skipped++; return; }
+        const current = parseInt(localStorage.getItem(k) || '0');
+        if (num > current) {
+          localStorage.setItem(k, num);
+          upgraded++;
+        }
+        imported++;
+      });
+      showImportResult(`✅ Imported ${imported} score(s) — ${upgraded} improved, ${skipped} skipped.`, 'success');
+      refreshExportPreview();
+    }
+
+    function handleImportFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => processImport(e.target.result);
+      reader.readAsText(file);
+      event.target.value = '';
+    }
+
+    function importData() {
+      const text = document.getElementById('import-text').value.trim();
+      if (!text) { showImportResult('Paste JSON or drop a file first.', 'error'); return; }
+      processImport(text);
+      document.getElementById('import-text').value = '';
+    }
+
+    // Drag & drop
+    const dropZone = document.getElementById('drop-zone');
+    if (dropZone) {
+      ['dragover','dragenter'].forEach(ev => dropZone.addEventListener(ev, e => {
+        e.preventDefault(); dropZone.style.borderColor = '#6c5ce7'; dropZone.style.background = '#1a1a2e';
+      }));
+      ['dragleave','drop'].forEach(ev => dropZone.addEventListener(ev, e => {
+        e.preventDefault(); dropZone.style.borderColor = '#3a3a4a'; dropZone.style.background = 'transparent';
+      }));
+      dropZone.addEventListener('drop', e => {
+        const file = e.dataTransfer.files[0];
+        if (file) { const r = new FileReader(); r.onload = ev => processImport(ev.target.result); r.readAsText(file); }
+      });
+    }
+
+    // Refresh preview when data tab is shown
+    const origShowTab = showTab;
 
     loadGames();
     loadReports();
