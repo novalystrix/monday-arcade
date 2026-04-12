@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Cascade — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #06060e;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #6c5ce7; }
+#header {
+  text-align: center; margin-bottom: 8px;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #444466;
+}
+#header h1 {
+  font-size: 1.8rem; letter-spacing: 0.2em;
+  background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff, #9b59b6);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+#stats {
+  display: flex; gap: 24px; font-size: 0.8rem; margin-top: 4px;
+  color: #444466; justify-content: center;
+}
+#stats span { color: #ff6b6b; }
+canvas { border-radius: 8px; cursor: crosshair; }
+#overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(6,6,14,0.94); z-index: 50;
+  text-align: center;
+}
+#overlay.hidden { display: none; }
+#overlay h2 {
+  font-size: 2.4rem; letter-spacing: 0.15em; margin-bottom: 16px;
+  background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+#overlay p { color: #777; font-size: 0.9rem; margin: 4px 0; }
+#overlay .btn {
+  margin-top: 20px; padding: 12px 32px;
+  background: linear-gradient(135deg, #ff6b6b, #ff9f43);
+  border: none; border-radius: 6px; color: #fff;
+  font-size: 1rem; cursor: pointer; letter-spacing: 0.1em;
+  transition: transform 0.15s;
+}
+#overlay .btn:hover { transform: scale(1.05); }
+#level-text {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  font-size: 2.5rem; letter-spacing: 0.2em; opacity: 0; z-index: 40;
+  background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  pointer-events: none; transition: opacity 0.5s;
+}
+#combo-text {
+  position: fixed; top: 30%; left: 50%; transform: translate(-50%,-50%);
+  font-size: 2rem; opacity: 0; z-index: 40;
+  color: #ffd93d; pointer-events: none; transition: opacity 0.3s, top 0.5s;
+  text-shadow: 0 0 20px #ffd93d80;
+}
+#instructions {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  color: #333; font-size: 0.7rem; letter-spacing: 0.1em; z-index: 10;
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<div id="header">
+  <h1>💥 CASCADE</h1>
+  <div id="stats">
+    Level <span id="s-level">1</span> &nbsp;|&nbsp;
+    Score <span id="s-score">0</span> &nbsp;|&nbsp;
+    Clicks <span id="s-clicks">0/0</span> &nbsp;|&nbsp;
+    Chain <span id="s-chain">0</span>
+  </div>
+</div>
+<canvas id="c"></canvas>
+<div id="overlay">
+  <h2>💥 CASCADE</h2>
+  <p>Place explosions to trigger chain reactions</p>
+  <p>Clear enough orbs with limited clicks</p>
+  <p style="color:#555; margin-top:8px">Click anywhere to start a reaction · Bigger chains = more points</p>
+  <button class="btn" id="start-btn">IGNITE</button>
+</div>
+<div id="level-text"></div>
+<div id="combo-text"></div>
+<div id="instructions">click to start a chain reaction</div>
+<script>
+const $ = id => document.getElementById(id);
+const C = $('c'), ctx = C.getContext('2d');
+const overlay = $('overlay'), levelText = $('level-text'), comboText = $('combo-text');
+
+let W, H;
+function resize() {
+  W = Math.min(window.innerWidth - 20, 560);
+  H = Math.min(window.innerHeight - 100, 640);
+  C.width = W; C.height = H;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const MAX_LEVELS = 12;
+const ORB_COLORS = [
+  '#ff6b6b','#ffd93d','#6bcb77','#4d96ff','#9b59b6',
+  '#00d2d3','#ff9ff3','#54a0ff','#fd79a8','#01a3a4',
+  '#e17055','#a29bfe'
+];
+
+let level = 1, score = 0, state = 'menu';
+let orbs = [], explosions = [], particles = [], shockwaves = [];
+let clicksLeft = 0, maxClicks = 0, totalOrbs = 0, orbsCleared = 0;
+let bestChain = 0, currentChain = 0;
+let bgStars = [];
+
+// BG stars
+for (let i = 0; i < 100; i++) {
+  bgStars.push({ x: Math.random() * 600, y: Math.random() * 700, r: Math.random() * 1.2, a: 0.15 + Math.random() * 0.4 });
+}
+
+// --- Level config ---
+function levelConfig(n) {
+  return {
+    orbs: 15 + n * 8,
+    clicks: Math.max(1, Math.ceil((15 + n * 8) * 0.12) + (n <= 3 ? 1 : 0)),
+    clearTarget: Math.ceil((15 + n * 8) * (0.55 + n * 0.025)),
+    orbSpeed: 0.3 + n * 0.08,
+    explosionRadius: 50 + Math.max(0, 6 - n) * 3,
+    explosionDuration: 1.0 + Math.max(0, 4 - n) * 0.1
+  };
+}
+
+function genLevel(n) {
+  const cfg = levelConfig(n);
+  totalOrbs = cfg.orbs;
+  maxClicks = cfg.clicks;
+  clicksLeft = cfg.clicks;
+  orbsCleared = 0;
+  bestChain = 0;
+  currentChain = 0;
+  orbs = [];
+  explosions = [];
+  particles = [];
+  shockwaves = [];
+
+  for (let i = 0; i < cfg.orbs; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = (0.3 + Math.random() * 0.7) * cfg.orbSpeed;
+    orbs.push({
+      x: 40 + Math.random() * (W - 80),
+      y: 40 + Math.random() * (H - 80),
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 7 + Math.random() * 5,
+      color: ORB_COLORS[i % ORB_COLORS.length],
+      alive: true,
+      pulse: Math.random() * Math.PI * 2,
+      hue: (i / cfg.orbs) * 360
+    });
+  }
+}
+
+// --- Explosions ---
+function createExplosion(x, y, fromClick) {
+  const cfg = levelConfig(level);
+  explosions.push({
+    x, y,
+    r: 0,
+    maxR: cfg.explosionRadius,
+    life: cfg.explosionDuration,
+    maxLife: cfg.explosionDuration,
+    fromClick,
+    color: fromClick ? '#ffffff' : ORB_COLORS[Math.floor(Math.random() * ORB_COLORS.length)]
+  });
+
+  // Shockwave
+  shockwaves.push({ x, y, r: 0, maxR: cfg.explosionRadius * 1.8, life: 0.5 });
+
+  // Particles burst
+  const count = fromClick ? 15 : 25;
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const spd = 1 + Math.random() * 4;
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * spd,
+      vy: Math.sin(a) * spd,
+      r: 1 + Math.random() * 3,
+      life: 1,
+      decay: 0.01 + Math.random() * 0.025,
+      color: fromClick ? '#ffd93d' : ORB_COLORS[Math.floor(Math.random() * ORB_COLORS.length)]
+    });
+  }
+}
+
+// --- Combo display ---
+function showCombo(count) {
+  if (count < 3) return;
+  let text = '';
+  if (count >= 20) text = '🔥 SUPERNOVA! x' + count;
+  else if (count >= 15) text = '⚡ MEGA CHAIN! x' + count;
+  else if (count >= 10) text = '💫 MASSIVE! x' + count;
+  else if (count >= 6) text = '✨ GREAT! x' + count;
+  else text = 'x' + count;
+
+  comboText.textContent = text;
+  comboText.style.opacity = 1;
+  comboText.style.top = '30%';
+  setTimeout(() => {
+    comboText.style.top = '25%';
+    comboText.style.opacity = 0;
+  }, 800);
+}
+
+// --- Physics & Logic ---
+function update(dt) {
+  if (state !== 'playing') return;
+
+  // Move orbs
+  orbs.forEach(o => {
+    if (!o.alive) return;
+    o.x += o.vx;
+    o.y += o.vy;
+    o.pulse += dt * 2;
+
+    if (o.x < o.r) { o.x = o.r; o.vx *= -1; }
+    if (o.x > W - o.r) { o.x = W - o.r; o.vx *= -1; }
+    if (o.y < o.r) { o.y = o.r; o.vy *= -1; }
+    if (o.y > H - o.r) { o.y = H - o.r; o.vy *= -1; }
+  });
+
+  // Expand explosions and check collisions
+  let chainThisFrame = false;
+  explosions.forEach(e => {
+    if (e.life <= 0) return;
+    const progress = 1 - e.life / e.maxLife;
+    e.r = e.maxR * easeOutExpo(Math.min(progress * 2, 1));
+    e.life -= dt;
+
+    // Check orb collisions
+    orbs.forEach(o => {
+      if (!o.alive) return;
+      const dist = Math.hypot(o.x - e.x, o.y - e.y);
+      if (dist < e.r + o.r) {
+        o.alive = false;
+        orbsCleared++;
+        currentChain++;
+        chainThisFrame = true;
+        score += 10 * currentChain * level;
+        createExplosion(o.x, o.y, false);
+      }
+    });
+  });
+
+  if (chainThisFrame) {
+    bestChain = Math.max(bestChain, currentChain);
+  }
+
+  // Remove dead explosions
+  explosions = explosions.filter(e => e.life > 0);
+
+  // Shockwaves
+  shockwaves.forEach(s => {
+    s.r += (s.maxR / 0.5) * dt;
+    s.life -= dt;
+  });
+  shockwaves = shockwaves.filter(s => s.life > 0);
+
+  // Particles
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.5 * dt; // slight gravity
+    p.life -= p.decay;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // Check end of chain (no more active explosions)
+  if (explosions.length === 0 && currentChain > 0) {
+    showCombo(currentChain);
+    currentChain = 0;
+  }
+
+  // Level complete check (after all explosions resolve)
+  if (explosions.length === 0 && clicksLeft <= 0) {
+    const cfg = levelConfig(level);
+    if (orbsCleared >= cfg.clearTarget) {
+      // Win level
+      score += orbsCleared * 50 + bestChain * 100;
+      if (level >= MAX_LEVELS) {
+        state = 'win';
+        showOverlay('✨ YOU WIN! ✨', `Final Score: ${score}`, 'PLAY AGAIN');
+      } else {
+        level++;
+        flashLevel();
+        setTimeout(() => genLevel(level), 600);
+      }
+    } else {
+      state = 'gameover';
+      showOverlay('REACTION FIZZLED', `Cleared ${orbsCleared}/${cfg.clearTarget} orbs · Score: ${score}`, 'RETRY');
+    }
+  }
+}
+
+function easeOutExpo(t) {
+  return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+}
+
+// --- Drawing ---
+function drawBG() {
+  const grad = ctx.createRadialGradient(W/2, H/2, 30, W/2, H/2, W * 0.8);
+  grad.addColorStop(0, '#0e0e22');
+  grad.addColorStop(0.5, '#09091a');
+  grad.addColorStop(1, '#06060e');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  bgStars.forEach(s => {
+    ctx.globalAlpha = s.a;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(s.x % W, s.y % H, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawOrbs(t) {
+  orbs.forEach(o => {
+    if (!o.alive) return;
+    const pulse = 1 + Math.sin(o.pulse) * 0.12;
+    const r = o.r * pulse;
+
+    // Outer glow
+    const glow = ctx.createRadialGradient(o.x, o.y, r * 0.2, o.x, o.y, r * 3);
+    glow.addColorStop(0, o.color + '35');
+    glow.addColorStop(1, o.color + '00');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, r * 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body
+    const bodyGrad = ctx.createRadialGradient(o.x - r*0.3, o.y - r*0.3, r*0.1, o.x, o.y, r);
+    bodyGrad.addColorStop(0, '#fff');
+    bodyGrad.addColorStop(0.4, o.color);
+    bodyGrad.addColorStop(1, o.color + '88');
+    ctx.fillStyle = bodyGrad;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Specular highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath();
+    ctx.arc(o.x - r*0.25, o.y - r*0.25, r * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function drawExplosions() {
+  explosions.forEach(e => {
+    if (e.life <= 0) return;
+    const alpha = (e.life / e.maxLife);
+
+    // Bright core
+    const core = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r);
+    core.addColorStop(0, e.color + Math.floor(alpha * 200).toString(16).padStart(2,'0'));
+    core.addColorStop(0.3, e.color + Math.floor(alpha * 100).toString(16).padStart(2,'0'));
+    core.addColorStop(0.7, e.color + Math.floor(alpha * 40).toString(16).padStart(2,'0'));
+    core.addColorStop(1, e.color + '00');
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // White-hot center
+    ctx.fillStyle = `rgba(255,255,255,${alpha * 0.6})`;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function drawShockwaves() {
+  shockwaves.forEach(s => {
+    const alpha = s.life / 0.5;
+    ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.3})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawClickIndicator() {
+  if (state !== 'playing' || clicksLeft <= 0) return;
+  // Draw remaining clicks as dots at bottom
+  const dotSize = 6;
+  const gap = 16;
+  const totalW = clicksLeft * dotSize + (clicksLeft - 1) * gap;
+  const startX = W / 2 - totalW / 2;
+  for (let i = 0; i < clicksLeft; i++) {
+    ctx.fillStyle = '#ff6b6b';
+    ctx.shadowColor = '#ff6b6b';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(startX + i * (dotSize + gap) + dotSize / 2, H - 16, dotSize / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+}
+
+function drawTargetBar() {
+  if (state !== 'playing') return;
+  const cfg = levelConfig(level);
+  const progress = Math.min(orbsCleared / cfg.clearTarget, 1);
+
+  // Bar background
+  const barW = W - 60;
+  const barH = 4;
+  const barX = 30;
+  const barY = H - 6;
+
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(barX, barY, barW, barH);
+
+  // Fill
+  const fillGrad = ctx.createLinearGradient(barX, 0, barX + barW * progress, 0);
+  fillGrad.addColorStop(0, '#ff6b6b');
+  fillGrad.addColorStop(0.5, '#ffd93d');
+  fillGrad.addColorStop(1, '#6bcb77');
+  ctx.fillStyle = fillGrad;
+  ctx.fillRect(barX, barY, barW * progress, barH);
+
+  // Target marker
+  const targetX = barX + barW;
+  ctx.fillStyle = '#666';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${orbsCleared}/${cfg.clearTarget}`, targetX, barY - 3);
+}
+
+// --- HUD ---
+function updateHUD() {
+  $('s-level').textContent = level;
+  $('s-score').textContent = score;
+  $('s-clicks').textContent = `${maxClicks - clicksLeft}/${maxClicks}`;
+  $('s-chain').textContent = bestChain;
+}
+
+// --- Overlay ---
+function showOverlay(title, sub, btn) {
+  overlay.classList.remove('hidden');
+  overlay.querySelector('h2').textContent = title;
+  const ps = overlay.querySelectorAll('p');
+  ps[0].textContent = sub;
+  ps[1].style.display = 'none';
+  ps[2].style.display = 'none';
+  $('start-btn').textContent = btn;
+}
+
+function hideOverlay() {
+  overlay.classList.add('hidden');
+  overlay.querySelectorAll('p').forEach(p => p.style.display = '');
+}
+
+function flashLevel() {
+  levelText.textContent = `LEVEL ${level}`;
+  levelText.style.opacity = 1;
+  setTimeout(() => { levelText.style.opacity = 0; }, 1000);
+}
+
+// --- Input ---
+function getPos(e) {
+  const rect = C.getBoundingClientRect();
+  const touch = e.changedTouches ? e.changedTouches[0] : e;
+  return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+}
+
+function handleClick(e) {
+  if (state !== 'playing') return;
+  if (clicksLeft <= 0) return;
+  if (explosions.length > 0) return; // wait for current chain to finish
+
+  const pos = getPos(e);
+  clicksLeft--;
+  currentChain = 0;
+  createExplosion(pos.x, pos.y, true);
+}
+
+C.addEventListener('click', handleClick);
+C.addEventListener('touchend', e => { e.preventDefault(); handleClick(e); });
+
+$('start-btn').addEventListener('click', () => {
+  level = 1; score = 0;
+  genLevel(level);
+  hideOverlay();
+  state = 'playing';
+  flashLevel();
+});
+
+// --- Main loop ---
+let lastTime = 0;
+function loop(time) {
+  const dt = Math.min((time - lastTime) / 1000, 0.05);
+  lastTime = time;
+
+  drawBG();
+
+  if (state === 'playing' || state === 'gameover' || state === 'win') {
+    drawOrbs(time / 1000);
+    drawExplosions();
+    drawShockwaves();
+    drawParticles();
+    drawClickIndicator();
+    drawTargetBar();
+    updateHUD();
+  }
+
+  if (state === 'playing') {
+    update(dt);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
