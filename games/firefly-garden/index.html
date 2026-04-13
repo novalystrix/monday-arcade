@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Firefly Garden — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #050510;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6a6aff;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+.back-link:hover { color: #9a9aff; }
+
+canvas {
+  display: block;
+  margin-top: 0;
+  touch-action: none;
+}
+
+#hud {
+  position: fixed;
+  top: 10px;
+  right: 16px;
+  text-align: right;
+  z-index: 100;
+  font-size: 14px;
+  line-height: 1.6;
+  text-shadow: 0 0 8px rgba(100, 200, 255, 0.5);
+}
+
+#hud .score { font-size: 22px; color: #ffdd44; }
+#hud .combo { color: #ff88ff; }
+#hud .lives { color: #ff6666; }
+#hud .level { color: #88ffcc; font-size: 12px; }
+
+#overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  background: rgba(5, 5, 16, 0.85);
+  backdrop-filter: blur(6px);
+}
+
+#overlay h1 {
+  font-size: 36px;
+  margin-bottom: 8px;
+  text-shadow: 0 0 20px rgba(255, 220, 100, 0.6);
+}
+
+#overlay .subtitle {
+  font-size: 14px;
+  color: #aaa;
+  margin-bottom: 24px;
+}
+
+#overlay .final-score {
+  font-size: 20px;
+  color: #ffdd44;
+  margin-bottom: 12px;
+}
+
+#overlay button {
+  background: linear-gradient(135deg, #2a1a4a, #1a2a5a);
+  border: 1px solid #5566aa;
+  color: #ddeeff;
+  padding: 12px 32px;
+  font-size: 16px;
+  font-family: 'Courier New', monospace;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+#overlay button:hover {
+  background: linear-gradient(135deg, #3a2a6a, #2a3a7a);
+  border-color: #88aaff;
+  box-shadow: 0 0 16px rgba(100, 150, 255, 0.4);
+}
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+
+<div id="hud" class="hidden">
+  <div class="score" id="scoreDisplay">0</div>
+  <div class="combo hidden" id="comboDisplay">x1</div>
+  <div class="lives" id="livesDisplay">♥♥♥</div>
+  <div class="level" id="levelDisplay">Garden 1</div>
+</div>
+
+<div id="overlay">
+  <h1>🌙 Firefly Garden</h1>
+  <div class="subtitle">Tap the fireflies before they fade away</div>
+  <div class="subtitle" style="color:#ff88ff; margin-bottom:20px">⚡ Avoid the red wasps!</div>
+  <button id="startBtn">Enter the Garden</button>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const scoreDisplay = document.getElementById('scoreDisplay');
+const comboDisplay = document.getElementById('comboDisplay');
+const livesDisplay = document.getElementById('livesDisplay');
+const levelDisplay = document.getElementById('levelDisplay');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Game state
+let running = false;
+let score = 0;
+let combo = 0;
+let comboTimer = 0;
+let lives = 3;
+let level = 1;
+let spawnTimer = 0;
+let levelTimer = 0;
+let fireflies = [];
+let particles = [];
+let bgStars = [];
+let grassBlades = [];
+let floatingTexts = [];
+
+// Spawn background elements
+function initBg() {
+  bgStars = [];
+  for (let i = 0; i < 80; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H * 0.6,
+      r: Math.random() * 1.5 + 0.3,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.5 + 0.2
+    });
+  }
+  grassBlades = [];
+  for (let i = 0; i < 120; i++) {
+    grassBlades.push({
+      x: Math.random() * W,
+      h: Math.random() * 40 + 20,
+      sway: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.8 + 0.3,
+      hue: Math.random() * 30 + 100
+    });
+  }
+}
+
+// Firefly types
+const TYPES = {
+  normal:  { color: [255, 220, 80],  points: 10,  radius: 14, lifetime: 3000, glow: '#ffdd44' },
+  golden:  { color: [255, 180, 0],   points: 30,  radius: 16, lifetime: 2000, glow: '#ffaa00' },
+  blue:    { color: [80, 180, 255],  points: 20,  radius: 12, lifetime: 2500, glow: '#44aaff' },
+  purple:  { color: [200, 100, 255], points: 25,  radius: 13, lifetime: 2200, glow: '#cc66ff' },
+  wasp:    { color: [255, 60, 60],   points: -1,  radius: 15, lifetime: 4000, glow: '#ff3333' }
+};
+
+function spawnFirefly() {
+  let type = 'normal';
+  const r = Math.random();
+  if (r < 0.08 + level * 0.01) type = 'wasp';
+  else if (r < 0.15) type = 'golden';
+  else if (r < 0.30) type = 'blue';
+  else if (r < 0.42) type = 'purple';
+
+  const t = TYPES[type];
+  const margin = 40;
+  const ff = {
+    type,
+    x: margin + Math.random() * (W - margin * 2),
+    y: margin + Math.random() * (H - margin * 2),
+    vx: (Math.random() - 0.5) * 1.2,
+    vy: (Math.random() - 0.5) * 1.2,
+    radius: t.radius,
+    color: t.color,
+    glow: t.glow,
+    points: t.points,
+    lifetime: t.lifetime * (1 - Math.min(level * 0.04, 0.5)),
+    maxLifetime: t.lifetime * (1 - Math.min(level * 0.04, 0.5)),
+    born: performance.now(),
+    wobble: Math.random() * Math.PI * 2,
+    trail: [],
+    pulse: 0,
+    caught: false
+  };
+  fireflies.push(ff);
+}
+
+function spawnParticles(x, y, color, count, spread) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * spread + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: Math.random() * 0.02 + 0.015,
+      r: Math.random() * 3 + 1,
+      color
+    });
+  }
+}
+
+function spawnFloatingText(x, y, text, color) {
+  floatingTexts.push({ x, y, text, color, life: 1, vy: -1.5 });
+}
+
+function catchFirefly(ff, px, py) {
+  if (ff.caught) return;
+  const dx = ff.x - px;
+  const dy = ff.y - py;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const hitRadius = ff.radius + 20;
+  if (dist > hitRadius) return false;
+
+  ff.caught = true;
+
+  if (ff.type === 'wasp') {
+    lives--;
+    combo = 0;
+    comboTimer = 0;
+    spawnParticles(ff.x, ff.y, [255, 60, 60], 20, 4);
+    spawnFloatingText(ff.x, ff.y, '💀 OUCH!', '#ff4444');
+    // Screen shake
+    shakeAmount = 8;
+    if (lives <= 0) gameOver();
+    return true;
+  }
+
+  combo++;
+  comboTimer = 2000;
+  const multiplier = Math.min(combo, 10);
+  const pts = ff.points * multiplier;
+  score += pts;
+
+  spawnParticles(ff.x, ff.y, ff.color, 15 + combo * 3, 3 + combo * 0.5);
+
+  let txt = `+${pts}`;
+  if (multiplier > 1) txt += ` x${multiplier}`;
+  spawnFloatingText(ff.x, ff.y, txt, ff.glow);
+
+  return true;
+}
+
+let shakeAmount = 0;
+let lastTime = 0;
+
+function update(dt) {
+  const now = performance.now();
+
+  // Spawn
+  const baseInterval = Math.max(400, 1200 - level * 80);
+  spawnTimer -= dt * 1000;
+  if (spawnTimer <= 0) {
+    spawnFirefly();
+    spawnTimer = baseInterval + Math.random() * 300;
+  }
+
+  // Level up every 15s
+  levelTimer += dt * 1000;
+  if (levelTimer > 15000) {
+    levelTimer = 0;
+    level++;
+    spawnFloatingText(W / 2, H / 2, `🌿 Garden ${level}`, '#88ffcc');
+  }
+
+  // Combo decay
+  if (comboTimer > 0) {
+    comboTimer -= dt * 1000;
+    if (comboTimer <= 0) { combo = 0; comboTimer = 0; }
+  }
+
+  // Shake decay
+  if (shakeAmount > 0) shakeAmount *= 0.88;
+  if (shakeAmount < 0.1) shakeAmount = 0;
+
+  // Update fireflies
+  for (let i = fireflies.length - 1; i >= 0; i--) {
+    const ff = fireflies[i];
+    const age = now - ff.born;
+
+    if (ff.caught || age > ff.maxLifetime) {
+      fireflies.splice(i, 1);
+      if (!ff.caught && ff.type !== 'wasp') {
+        // Missed — break combo
+        combo = 0;
+        comboTimer = 0;
+      }
+      continue;
+    }
+
+    ff.wobble += dt * 3;
+    ff.vx += Math.sin(ff.wobble) * 0.3 * dt;
+    ff.vy += Math.cos(ff.wobble * 0.7) * 0.3 * dt;
+
+    // Gentle drift
+    ff.x += ff.vx;
+    ff.y += ff.vy;
+
+    // Bounce off edges
+    if (ff.x < 20) { ff.x = 20; ff.vx *= -1; }
+    if (ff.x > W - 20) { ff.x = W - 20; ff.vx *= -1; }
+    if (ff.y < 20) { ff.y = 20; ff.vy *= -1; }
+    if (ff.y > H - 20) { ff.y = H - 20; ff.vy *= -1; }
+
+    // Trail
+    ff.trail.push({ x: ff.x, y: ff.y, a: 1 });
+    if (ff.trail.length > 12) ff.trail.shift();
+
+    ff.pulse += dt * 6;
+  }
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.02; // slight gravity
+    p.life -= p.decay;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Floating texts
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const ft = floatingTexts[i];
+    ft.y += ft.vy;
+    ft.life -= 0.012;
+    if (ft.life <= 0) floatingTexts.splice(i, 1);
+  }
+
+  // HUD
+  scoreDisplay.textContent = score;
+  livesDisplay.textContent = '♥'.repeat(Math.max(0, lives)) + '♡'.repeat(Math.max(0, 3 - lives));
+  levelDisplay.textContent = `Garden ${level}`;
+
+  if (combo > 1) {
+    comboDisplay.classList.remove('hidden');
+    comboDisplay.textContent = `x${Math.min(combo, 10)} combo`;
+  } else {
+    comboDisplay.classList.add('hidden');
+  }
+}
+
+function drawMoon() {
+  const mx = W * 0.82, my = H * 0.12, mr = 30;
+  const grad = ctx.createRadialGradient(mx, my, mr * 0.2, mx, my, mr * 3);
+  grad.addColorStop(0, 'rgba(255, 240, 200, 0.3)');
+  grad.addColorStop(0.3, 'rgba(255, 240, 200, 0.08)');
+  grad.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad;
+  ctx.fillRect(mx - mr * 3, my - mr * 3, mr * 6, mr * 6);
+
+  ctx.fillStyle = '#fff8e0';
+  ctx.beginPath();
+  ctx.arc(mx, my, mr, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Crescent shadow
+  ctx.fillStyle = '#050510';
+  ctx.beginPath();
+  ctx.arc(mx + 10, my - 3, mr * 0.85, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Sky gradient
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+  skyGrad.addColorStop(0, '#05051a');
+  skyGrad.addColorStop(0.5, '#0a0a2a');
+  skyGrad.addColorStop(0.85, '#0d1a0d');
+  skyGrad.addColorStop(1, '#0a1a0a');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  drawMoon();
+
+  // Stars
+  const now = performance.now() / 1000;
+  for (const s of bgStars) {
+    const twinkle = Math.sin(now * s.speed + s.twinkle) * 0.5 + 0.5;
+    ctx.globalAlpha = twinkle * 0.8;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Grass
+  const groundY = H * 0.88;
+  ctx.fillStyle = '#0a1a0a';
+  ctx.fillRect(0, groundY, W, H - groundY);
+
+  for (const g of grassBlades) {
+    const sway = Math.sin(now * g.speed + g.sway) * 6;
+    ctx.strokeStyle = `hsl(${g.hue}, 40%, 18%)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(g.x, groundY);
+    ctx.quadraticCurveTo(g.x + sway, groundY - g.h * 0.6, g.x + sway * 1.5, groundY - g.h);
+    ctx.stroke();
+  }
+
+  // Screen shake
+  if (shakeAmount > 0) {
+    ctx.save();
+    ctx.translate(
+      (Math.random() - 0.5) * shakeAmount,
+      (Math.random() - 0.5) * shakeAmount
+    );
+  }
+
+  // Firefly trails
+  for (const ff of fireflies) {
+    const age = (performance.now() - ff.born) / ff.maxLifetime;
+    const fadeAlpha = age > 0.7 ? 1 - (age - 0.7) / 0.3 : 1;
+
+    for (let t = 0; t < ff.trail.length; t++) {
+      const tp = ff.trail[t];
+      const ta = (t / ff.trail.length) * 0.3 * fadeAlpha;
+      ctx.fillStyle = `rgba(${ff.color[0]}, ${ff.color[1]}, ${ff.color[2]}, ${ta})`;
+      ctx.beginPath();
+      ctx.arc(tp.x, tp.y, ff.radius * 0.4 * (t / ff.trail.length), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Fireflies
+  for (const ff of fireflies) {
+    if (ff.caught) continue;
+    const age = (performance.now() - ff.born) / ff.maxLifetime;
+    const fadeAlpha = age > 0.7 ? 1 - (age - 0.7) / 0.3 : 1;
+    const pulseScale = 1 + Math.sin(ff.pulse) * 0.15;
+
+    // Outer glow
+    const glowGrad = ctx.createRadialGradient(ff.x, ff.y, 0, ff.x, ff.y, ff.radius * 3 * pulseScale);
+    glowGrad.addColorStop(0, `rgba(${ff.color[0]}, ${ff.color[1]}, ${ff.color[2]}, ${0.4 * fadeAlpha})`);
+    glowGrad.addColorStop(0.5, `rgba(${ff.color[0]}, ${ff.color[1]}, ${ff.color[2]}, ${0.1 * fadeAlpha})`);
+    glowGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(ff.x, ff.y, ff.radius * 3 * pulseScale, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Core
+    ctx.fillStyle = `rgba(${ff.color[0]}, ${ff.color[1]}, ${ff.color[2]}, ${fadeAlpha})`;
+    ctx.beginPath();
+    ctx.arc(ff.x, ff.y, ff.radius * 0.5 * pulseScale, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bright center
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.6 * fadeAlpha})`;
+    ctx.beginPath();
+    ctx.arc(ff.x, ff.y, ff.radius * 0.2 * pulseScale, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Wasp indicator — tiny wings
+    if (ff.type === 'wasp') {
+      const wingAngle = Math.sin(now * 20) * 0.4;
+      ctx.strokeStyle = `rgba(255, 80, 80, ${0.6 * fadeAlpha})`;
+      ctx.lineWidth = 1.5;
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(ff.x, ff.y);
+        ctx.lineTo(
+          ff.x + Math.cos(wingAngle) * 12 * side,
+          ff.y - Math.abs(Math.sin(wingAngle)) * 8 - 4
+        );
+        ctx.stroke();
+      }
+    }
+
+    // Fade warning — blink when dying
+    if (age > 0.6 && ff.type !== 'wasp') {
+      const blink = Math.sin(age * 40) > 0;
+      if (blink) {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 * fadeAlpha})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(ff.x, ff.y, ff.radius * 1.5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = `rgb(${p.color[0]}, ${p.color[1]}, ${p.color[2]})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Floating texts
+  for (const ft of floatingTexts) {
+    ctx.globalAlpha = ft.life;
+    ctx.fillStyle = ft.color;
+    ctx.font = 'bold 18px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(ft.text, ft.x, ft.y);
+  }
+  ctx.globalAlpha = 1;
+
+  if (shakeAmount > 0) ctx.restore();
+}
+
+function gameLoop(timestamp) {
+  if (!running) return;
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  lastTime = timestamp;
+  update(dt);
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+  score = 0;
+  combo = 0;
+  comboTimer = 0;
+  lives = 3;
+  level = 1;
+  spawnTimer = 0;
+  levelTimer = 0;
+  fireflies = [];
+  particles = [];
+  floatingTexts = [];
+  shakeAmount = 0;
+  running = true;
+
+  initBg();
+  hud.classList.remove('hidden');
+  overlay.classList.add('hidden');
+  lastTime = performance.now();
+  requestAnimationFrame(gameLoop);
+}
+
+function gameOver() {
+  running = false;
+  overlay.classList.remove('hidden');
+  overlay.innerHTML = `
+    <h1>🌙 Garden Closed</h1>
+    <div class="final-score">Score: ${score}</div>
+    <div class="subtitle">You reached Garden ${level}</div>
+    <div class="subtitle" style="margin-bottom:20px">${
+      score > 500 ? '✨ Beautiful catch!' :
+      score > 200 ? '🌿 Nice work!' :
+      '🌱 Keep trying!'
+    }</div>
+    <button onclick="startGame()">Try Again</button>
+  `;
+}
+
+// Input
+function handleTap(x, y) {
+  if (!running) return;
+  let caught = false;
+  // Check from top (latest) to bottom for overlap priority
+  for (let i = fireflies.length - 1; i >= 0; i--) {
+    if (catchFirefly(fireflies[i], x, y)) {
+      caught = true;
+      break;
+    }
+  }
+  if (!caught) {
+    // Tap miss — small ambient particle burst
+    spawnParticles(x, y, [80, 120, 80], 4, 1.5);
+  }
+}
+
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  handleTap(e.clientX, e.clientY);
+});
+
+startBtn.addEventListener('click', startGame);
+
+// Draw initial background
+initBg();
+draw();
+</script>
+</body>
+</html>
