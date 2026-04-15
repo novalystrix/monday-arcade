@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Stardust</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; touch-action:none; font-family:'Segoe UI',system-ui,sans-serif; }
+canvas { display:block; }
+#ui { position:absolute; top:0; left:0; width:100%; pointer-events:none; z-index:10; }
+#hud { display:flex; justify-content:space-between; padding:18px 24px; font-size:18px; color:#fff; text-shadow:0 0 12px rgba(120,180,255,.8); }
+#hud span { opacity:.85; }
+#combo { color:#ffdd57; font-weight:700; transition:transform .15s; }
+#combo.pop { transform:scale(1.4); }
+#overlay { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:auto; z-index:20; }
+#overlay.hidden { display:none; }
+#overlay h1 { font-size:56px; color:#fff; text-shadow:0 0 40px rgba(100,180,255,.7), 0 0 80px rgba(100,100,255,.4); margin-bottom:8px; letter-spacing:4px; }
+#overlay .sub { font-size:18px; color:rgba(255,255,255,.6); margin-bottom:36px; }
+#overlay .score-display { font-size:28px; color:#ffdd57; text-shadow:0 0 20px rgba(255,220,80,.6); margin-bottom:24px; }
+#overlay button { background:linear-gradient(135deg,#4a6cf7,#7c3aed); border:none; color:#fff; padding:16px 48px; font-size:20px; border-radius:50px; cursor:pointer; letter-spacing:2px; text-transform:uppercase; box-shadow:0 0 30px rgba(100,100,255,.4); transition:all .2s; pointer-events:auto; }
+#overlay button:hover { transform:scale(1.05); box-shadow:0 0 50px rgba(100,100,255,.6); }
+.stats { display:flex; gap:24px; margin-bottom:28px; font-size:15px; color:rgba(255,255,255,.5); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div id="hud">
+    <span>✨ <span id="score">0</span></span>
+    <span id="combo"></span>
+    <span>❤️ <span id="lives">3</span></span>
+  </div>
+</div>
+<div id="overlay">
+  <h1>✨ STARDUST</h1>
+  <div class="sub">Collect stardust. Dodge dark matter. Leave your mark among the stars.</div>
+  <button id="startBtn">PLAY</button>
+</div>
+<script>
+const C = document.getElementById('c');
+const ctx = C.getContext('2d');
+let W, H;
+function resize() { W = C.width = innerWidth; H = C.height = innerHeight; }
+resize(); addEventListener('resize', resize);
+
+// State
+let state = 'menu'; // menu, playing, dead
+let score = 0, lives = 3, combo = 0, comboTimer = 0, maxCombo = 0;
+let dustCollected = 0, darkHits = 0, playTime = 0;
+let playerX, playerY, targetX, targetY;
+let particles = [], dusts = [], darks = [], trails = [], bursts = [], constellations = [];
+let bgStars = [];
+let shakeX = 0, shakeY = 0, shakeDec = 0;
+let difficulty = 1;
+let spawnTimer = 0, darkSpawnTimer = 0;
+let pulsePhase = 0;
+
+// Background stars
+function initBgStars() {
+  bgStars = [];
+  for (let i = 0; i < 200; i++) {
+    bgStars.push({ x: Math.random()*W, y: Math.random()*H, r: Math.random()*1.5+.3, a: Math.random(), s: Math.random()*.3+.1 });
+  }
+}
+initBgStars();
+
+// Player
+function initPlayer() {
+  playerX = targetX = W/2;
+  playerY = targetY = H/2;
+}
+
+// Input
+let pointer = { x: W/2, y: H/2, active: false };
+function onMove(e) {
+  const t = e.touches ? e.touches[0] : e;
+  targetX = t.clientX;
+  targetY = t.clientY;
+  pointer.active = true;
+}
+addEventListener('mousemove', onMove);
+addEventListener('touchmove', e => { e.preventDefault(); onMove(e); }, { passive:false });
+addEventListener('touchstart', e => { e.preventDefault(); onMove(e); }, { passive:false });
+
+// Spawn stardust
+function spawnDust() {
+  const side = Math.random()*4|0;
+  let x, y;
+  if (side===0) { x=Math.random()*W; y=-20; }
+  else if (side===1) { x=W+20; y=Math.random()*H; }
+  else if (side===2) { x=Math.random()*W; y=H+20; }
+  else { x=-20; y=Math.random()*H; }
+  const angle = Math.atan2(H/2-y+Math.random()*200-100, W/2-x+Math.random()*200-100);
+  const speed = Math.random()*1.5+.5;
+  const hue = Math.random()*60+180; // blue-cyan-purple range
+  const size = Math.random()*4+3;
+  const value = size > 5 ? 3 : size > 4 ? 2 : 1;
+  dusts.push({ x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, hue, size, value, age:0, pulse:Math.random()*Math.PI*2 });
+}
+
+// Spawn dark matter
+function spawnDark() {
+  const side = Math.random()*4|0;
+  let x, y;
+  if (side===0) { x=Math.random()*W; y=-30; }
+  else if (side===1) { x=W+30; y=Math.random()*H; }
+  else if (side===2) { x=Math.random()*W; y=H+30; }
+  else { x=-30; y=Math.random()*H; }
+  const angle = Math.atan2(playerY-y, playerX-x) + (Math.random()-.5)*.8;
+  const speed = Math.random()*1.2+.6+difficulty*.15;
+  const size = Math.random()*8+12;
+  darks.push({ x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, size, rot:0, rotSpeed:(Math.random()-.5)*.08 });
+}
+
+// Burst effect
+function createBurst(x, y, hue, count=12) {
+  for (let i=0; i<count; i++) {
+    const angle = (i/count)*Math.PI*2 + Math.random()*.3;
+    const speed = Math.random()*4+2;
+    bursts.push({ x, y, vx:Math.cos(angle)*speed, vy:Math.sin(angle)*speed, hue, life:1, size:Math.random()*3+1 });
+  }
+}
+
+// Constellation
+function addConstellation(x, y) {
+  constellations.push({ x, y, age:0, maxAge:180 });
+  // Draw lines between recent constellation points
+}
+
+// Shake
+function triggerShake(intensity=5) {
+  shakeX = (Math.random()-.5)*intensity*2;
+  shakeY = (Math.random()-.5)*intensity*2;
+  shakeDec = intensity;
+}
+
+// HUD
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const comboEl = document.getElementById('combo');
+const overlay = document.getElementById('overlay');
+
+function updateHUD() {
+  scoreEl.textContent = score;
+  livesEl.textContent = lives;
+  if (combo > 1) {
+    comboEl.textContent = `x${combo}`;
+    comboEl.classList.add('pop');
+    setTimeout(()=>comboEl.classList.remove('pop'), 150);
+  } else {
+    comboEl.textContent = '';
+  }
+}
+
+// Game loop
+let lastTime = 0;
+function loop(time) {
+  const dt = Math.min((time - lastTime)/16.667, 3);
+  lastTime = time;
+  requestAnimationFrame(loop);
+
+  ctx.save();
+  // Shake
+  if (shakeDec > 0) {
+    ctx.translate(shakeX, shakeY);
+    shakeX *= -.5; shakeY *= -.5;
+    shakeDec -= dt;
+  }
+
+  // Clear with slight trail
+  ctx.fillStyle = 'rgba(0,0,8,.15)';
+  ctx.fillRect(0,0,W,H);
+
+  pulsePhase += .02*dt;
+
+  // Background stars
+  bgStars.forEach(s => {
+    s.a += s.s*.02*dt;
+    const alpha = .3 + Math.sin(s.a)*.3;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(200,220,255,${alpha})`;
+    ctx.fill();
+  });
+
+  if (state === 'playing') {
+    playTime += dt;
+    difficulty = 1 + playTime/3600; // ramp slowly
+
+    // Move player toward target
+    const dx = targetX - playerX;
+    const dy = targetY - playerY;
+    const ease = .08;
+    playerX += dx*ease*dt;
+    playerY += dy*ease*dt;
+
+    // Trail behind player
+    if (Math.random() < .6) {
+      trails.push({ x:playerX+(Math.random()-.5)*6, y:playerY+(Math.random()-.5)*6, life:1, hue:220+Math.random()*40, size:Math.random()*3+1 });
+    }
+
+    // Spawn
+    spawnTimer += dt;
+    if (spawnTimer > Math.max(8, 25-difficulty*2)) { spawnDust(); spawnTimer = 0; }
+    darkSpawnTimer += dt;
+    if (darkSpawnTimer > Math.max(30, 60-difficulty*4)) { spawnDark(); darkSpawnTimer = 0; }
+
+    // Combo timer
+    if (combo > 0) {
+      comboTimer -= dt;
+      if (comboTimer <= 0) { combo = 0; updateHUD(); }
+    }
+
+    // Update dusts
+    dusts.forEach(d => {
+      d.x += d.vx*dt; d.y += d.vy*dt;
+      d.age += dt; d.pulse += .05*dt;
+    });
+    dusts = dusts.filter(d => d.x > -50 && d.x < W+50 && d.y > -50 && d.y < H+50);
+
+    // Update darks
+    darks.forEach(d => {
+      d.x += d.vx*dt; d.y += d.vy*dt;
+      d.rot += d.rotSpeed*dt;
+      // Slight homing
+      const ax = playerX - d.x, ay = playerY - d.y;
+      const dist = Math.sqrt(ax*ax+ay*ay);
+      if (dist > 0) {
+        d.vx += (ax/dist)*.015*dt*difficulty;
+        d.vy += (ay/dist)*.015*dt*difficulty;
+      }
+    });
+    darks = darks.filter(d => d.x > -60 && d.x < W+60 && d.y > -60 && d.y < H+60);
+
+    // Collision: player <-> dust
+    const collectRadius = 28;
+    for (let i = dusts.length-1; i >= 0; i--) {
+      const d = dusts[i];
+      const dx = playerX - d.x, dy = playerY - d.y;
+      if (dx*dx+dy*dy < (collectRadius+d.size)*(collectRadius+d.size)) {
+        combo++;
+        comboTimer = 90; // frames
+        if (combo > maxCombo) maxCombo = combo;
+        const points = d.value * Math.max(1, combo);
+        score += points;
+        dustCollected++;
+        createBurst(d.x, d.y, d.hue, 8+combo*2);
+        addConstellation(d.x, d.y);
+        dusts.splice(i, 1);
+        updateHUD();
+      }
+    }
+
+    // Collision: player <-> dark matter
+    const hitRadius = 14;
+    for (let i = darks.length-1; i >= 0; i--) {
+      const d = darks[i];
+      const dx = playerX - d.x, dy = playerY - d.y;
+      if (dx*dx+dy*dy < (hitRadius+d.size)*(hitRadius+d.size)) {
+        lives--;
+        darkHits++;
+        combo = 0;
+        triggerShake(12);
+        createBurst(d.x, d.y, 0, 20);
+        darks.splice(i, 1);
+        updateHUD();
+        if (lives <= 0) {
+          state = 'dead';
+          showOverlay();
+        }
+      }
+    }
+  }
+
+  // Draw constellations (connecting lines)
+  if (constellations.length > 1) {
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(100,180,255,.12)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < constellations.length; i++) {
+      const a = constellations[i-1], b = constellations[i];
+      const dist = Math.hypot(b.x-a.x, b.y-a.y);
+      if (dist < 200) {
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      }
+    }
+    ctx.stroke();
+  }
+  constellations.forEach(c => {
+    c.age += .01;
+    const alpha = Math.max(0, 1-c.age/c.maxAge);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 2, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(150,200,255,${alpha*.5})`;
+    ctx.fill();
+  });
+  constellations = constellations.filter(c => c.age < c.maxAge);
+
+  // Draw trails
+  trails.forEach(t => {
+    t.life -= .02;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.size*t.life, 0, Math.PI*2);
+    ctx.fillStyle = `hsla(${t.hue},80%,70%,${t.life*.6})`;
+    ctx.fill();
+  });
+  trails = trails.filter(t => t.life > 0);
+
+  // Draw bursts
+  bursts.forEach(b => {
+    b.x += b.vx; b.y += b.vy;
+    b.vx *= .96; b.vy *= .96;
+    b.life -= .025;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.size*b.life, 0, Math.PI*2);
+    ctx.fillStyle = `hsla(${b.hue},90%,70%,${b.life})`;
+    ctx.fill();
+  });
+  bursts = bursts.filter(b => b.life > 0);
+
+  // Draw stardust
+  dusts.forEach(d => {
+    const glow = .5 + Math.sin(d.pulse)*.3;
+    // Outer glow
+    const grad = ctx.createRadialGradient(d.x,d.y,0,d.x,d.y,d.size*3);
+    grad.addColorStop(0, `hsla(${d.hue},90%,75%,${glow*.4})`);
+    grad.addColorStop(1, `hsla(${d.hue},90%,75%,0)`);
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.size*3, 0, Math.PI*2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    // Core
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.size, 0, Math.PI*2);
+    ctx.fillStyle = `hsla(${d.hue},80%,80%,${glow+.3})`;
+    ctx.fill();
+  });
+
+  // Draw dark matter
+  darks.forEach(d => {
+    ctx.save();
+    ctx.translate(d.x, d.y);
+    ctx.rotate(d.rot);
+    // Spiky shape
+    ctx.beginPath();
+    for (let i=0; i<8; i++) {
+      const angle = (i/8)*Math.PI*2;
+      const r = i%2===0 ? d.size : d.size*.5;
+      const px = Math.cos(angle)*r, py = Math.sin(angle)*r;
+      i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(40,0,60,.8)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(180,0,255,.4)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // Inner glow
+    const g = ctx.createRadialGradient(0,0,0,0,0,d.size);
+    g.addColorStop(0, 'rgba(100,0,150,.3)');
+    g.addColorStop(1, 'rgba(40,0,60,0)');
+    ctx.beginPath();
+    ctx.arc(0,0,d.size,0,Math.PI*2);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.restore();
+  });
+
+  // Draw player
+  if (state === 'playing') {
+    const breathe = 1 + Math.sin(pulsePhase*2)*.08;
+    // Outer aura
+    const aura = ctx.createRadialGradient(playerX,playerY,0,playerX,playerY,35*breathe);
+    aura.addColorStop(0, 'rgba(100,180,255,.2)');
+    aura.addColorStop(.5, 'rgba(100,120,255,.08)');
+    aura.addColorStop(1, 'rgba(100,100,255,0)');
+    ctx.beginPath();
+    ctx.arc(playerX, playerY, 35*breathe, 0, Math.PI*2);
+    ctx.fillStyle = aura;
+    ctx.fill();
+    // Core
+    const core = ctx.createRadialGradient(playerX,playerY,0,playerX,playerY,10*breathe);
+    core.addColorStop(0, '#fff');
+    core.addColorStop(.4, 'rgba(150,200,255,.9)');
+    core.addColorStop(1, 'rgba(80,120,255,0)');
+    ctx.beginPath();
+    ctx.arc(playerX, playerY, 10*breathe, 0, Math.PI*2);
+    ctx.fillStyle = core;
+    ctx.fill();
+    // Inner bright
+    ctx.beginPath();
+    ctx.arc(playerX, playerY, 4, 0, Math.PI*2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+
+    // Combo ring
+    if (combo > 1) {
+      const ringAlpha = Math.min(.6, combo*.05);
+      ctx.beginPath();
+      ctx.arc(playerX, playerY, 20+combo*2, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(255,220,80,${ringAlpha})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+
+function showOverlay() {
+  overlay.classList.remove('hidden');
+  if (state === 'dead') {
+    overlay.innerHTML = `
+      <h1>✨ STARDUST</h1>
+      <div class="score-display">Score: ${score}</div>
+      <div class="stats">
+        <span>⭐ ${dustCollected} collected</span>
+        <span>💥 Max combo: x${maxCombo}</span>
+      </div>
+      <button id="restartBtn">PLAY AGAIN</button>
+    `;
+    overlay.querySelector('#restartBtn').addEventListener('click', startGame);
+  }
+}
+
+function startGame() {
+  score = 0; lives = 3; combo = 0; comboTimer = 0; maxCombo = 0;
+  dustCollected = 0; darkHits = 0; playTime = 0; difficulty = 1;
+  spawnTimer = 0; darkSpawnTimer = 0;
+  dusts = []; darks = []; trails = []; bursts = []; constellations = [];
+  initPlayer();
+  updateHUD();
+  overlay.classList.add('hidden');
+  state = 'playing';
+  // Initial dust burst
+  for (let i=0; i<15; i++) spawnDust();
+}
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
