@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Prism Dash — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #05050f;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #6c5ce7; }
+#header {
+  text-align: center; margin-bottom: 6px;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #444466;
+}
+#header h1 {
+  font-size: 2rem; letter-spacing: 0.25em;
+  background: linear-gradient(90deg, #ff0000, #ff8800, #ffff00, #00ff00, #0088ff, #8800ff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 20px rgba(255,255,255,0.3));
+}
+canvas { display: block; border-radius: 6px; }
+#ui-overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: none; z-index: 50;
+}
+#score-display {
+  position: fixed; top: 12px; right: 16px;
+  font-size: 1.4rem; letter-spacing: 0.15em; z-index: 100;
+  text-shadow: 0 0 12px rgba(255,255,255,0.5);
+}
+#combo-display {
+  position: fixed; top: 40px; right: 16px;
+  font-size: 0.9rem; letter-spacing: 0.1em; z-index: 100;
+  color: #ffbe0b; opacity: 0;
+  transition: opacity 0.3s;
+}
+#start-screen, #game-over-screen {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  z-index: 200; pointer-events: all;
+  background: radial-gradient(ellipse at center, rgba(10,10,30,0.95) 0%, rgba(5,5,15,0.99) 100%);
+}
+#game-over-screen { display: none; }
+.screen-title {
+  font-size: 2.8rem; letter-spacing: 0.3em; margin-bottom: 8px;
+  background: linear-gradient(90deg, #ff0000, #ff8800, #ffff00, #00ff00, #0088ff, #8800ff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0%, 100% { filter: hue-rotate(0deg) drop-shadow(0 0 30px rgba(255,100,255,0.4)); }
+  50% { filter: hue-rotate(40deg) drop-shadow(0 0 50px rgba(100,200,255,0.6)); }
+}
+.screen-sub {
+  font-size: 0.8rem; color: #667; letter-spacing: 0.15em; margin-bottom: 30px;
+}
+.btn {
+  padding: 14px 48px; font-size: 1rem; letter-spacing: 0.2em;
+  background: transparent; border: 1px solid #3a86ff;
+  color: #3a86ff; cursor: pointer; font-family: inherit;
+  transition: all 0.3s; border-radius: 4px;
+}
+.btn:hover { background: #3a86ff22; box-shadow: 0 0 20px #3a86ff44; }
+.final-score { font-size: 3rem; margin: 20px 0; color: #fff; }
+.instructions {
+  font-size: 0.7rem; color: #556; letter-spacing: 0.1em;
+  max-width: 400px; text-align: center; margin-top: 24px; line-height: 1.8;
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← ARCADE</a>
+
+<div id="start-screen">
+  <div class="screen-title">PRISM DASH</div>
+  <div class="screen-sub">SPLIT LIGHT. MATCH COLORS. SHINE.</div>
+  <button class="btn" onclick="startGame()">▸ PLAY</button>
+  <div class="instructions">
+    MOVE — Arrow keys / WASD / Touch drag<br>
+    Guide your prism through white light beams<br>
+    The prism splits light into rainbow colors<br>
+    Catch matching color orbs for points & combos
+  </div>
+</div>
+
+<div id="game-over-screen">
+  <div class="screen-title">GAME OVER</div>
+  <div class="final-score" id="final-score">0</div>
+  <div class="screen-sub" id="final-sub">BEAUTIFUL RUN</div>
+  <button class="btn" onclick="startGame()">▸ AGAIN</button>
+</div>
+
+<div id="score-display">0</div>
+<div id="combo-display">x1</div>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score-display');
+const comboEl = document.getElementById('combo-display');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Rainbow colors
+const RAINBOW = [
+  '#ff0044', '#ff6600', '#ffcc00', '#00ff66', '#0099ff', '#6633ff', '#ff00cc'
+];
+const RAINBOW_NAMES = ['Red','Orange','Yellow','Green','Blue','Violet','Pink'];
+
+// Game state
+let playing = false;
+let score = 0;
+let combo = 0;
+let maxCombo = 0;
+let lives = 3;
+let time = 0;
+let difficulty = 1;
+let shakeTime = 0;
+
+// Prism (player)
+let prism = { x: 0, y: 0, angle: 0, size: 28, trail: [] };
+
+// Game objects
+let beams = [];
+let orbs = [];
+let particles = [];
+let bgStars = [];
+let splitRays = [];
+let floatingTexts = [];
+
+// Input
+let keys = {};
+let touchStart = null;
+let touchCurrent = null;
+
+// Initialize background stars
+function initStars() {
+  bgStars = [];
+  for (let i = 0; i < 120; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      size: Math.random() * 1.5 + 0.3,
+      speed: Math.random() * 0.3 + 0.1,
+      hue: Math.random() * 360,
+      twinkle: Math.random() * Math.PI * 2
+    });
+  }
+}
+initStars();
+
+// Spawn a white light beam (horizontal line that scrolls down)
+function spawnBeam() {
+  const gapW = 120 + Math.random() * 100;
+  const gapX = Math.random() * (W - gapW - 60) + 30;
+  beams.push({
+    y: -10,
+    speed: 1.2 + difficulty * 0.3 + Math.random() * 0.5,
+    gapX, gapW,
+    hit: false,
+    alpha: 1
+  });
+}
+
+// Spawn color orbs
+function spawnOrb() {
+  const ci = Math.floor(Math.random() * RAINBOW.length);
+  const side = Math.random() < 0.5 ? -1 : 1;
+  orbs.push({
+    x: W/2 + side * (80 + Math.random() * (W/2 - 120)),
+    y: -20,
+    vy: 1.5 + difficulty * 0.25 + Math.random() * 0.8,
+    vx: (Math.random() - 0.5) * 0.5,
+    radius: 14 + Math.random() * 6,
+    colorIndex: ci,
+    color: RAINBOW[ci],
+    pulse: Math.random() * Math.PI * 2,
+    alive: true
+  });
+}
+
+// Particle burst
+function burstParticles(x, y, color, count, speed) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = Math.random() * speed + speed * 0.3;
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * s,
+      vy: Math.sin(a) * s,
+      life: 1,
+      decay: 0.015 + Math.random() * 0.02,
+      color,
+      size: Math.random() * 4 + 1.5
+    });
+  }
+}
+
+// Split ray effect when prism hits a beam
+function createSplitRays(x, y) {
+  for (let i = 0; i < RAINBOW.length; i++) {
+    const angle = -Math.PI/2 + (i - 3) * 0.18;
+    splitRays.push({
+      x, y,
+      angle,
+      length: 0,
+      maxLength: 150 + Math.random() * 100,
+      speed: 6 + Math.random() * 3,
+      color: RAINBOW[i],
+      life: 1,
+      width: 3
+    });
+  }
+}
+
+// Floating text
+function addFloatingText(x, y, text, color) {
+  floatingTexts.push({ x, y, text, color, life: 1, vy: -1.5 });
+}
+
+function startGame() {
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('game-over-screen').style.display = 'none';
+  playing = true;
+  score = 0;
+  combo = 0;
+  maxCombo = 0;
+  lives = 3;
+  time = 0;
+  difficulty = 1;
+  shakeTime = 0;
+  prism = { x: W/2, y: H * 0.7, angle: 0, size: 28, trail: [] };
+  beams = [];
+  orbs = [];
+  particles = [];
+  splitRays = [];
+  floatingTexts = [];
+  scoreEl.textContent = '0';
+  comboEl.style.opacity = '0';
+}
+
+function endGame() {
+  playing = false;
+  document.getElementById('final-score').textContent = score;
+  const sub = score > 500 ? 'ABSOLUTELY DAZZLING ✨' :
+              score > 200 ? 'BRILLIANT LIGHT SHOW' :
+              score > 50 ? 'NICE REFRACTION' : 'KEEP SHINING';
+  document.getElementById('final-sub').textContent = sub;
+  document.getElementById('game-over-screen').style.display = 'flex';
+}
+
+// Input handlers
+document.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; e.preventDefault(); });
+document.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  touchCurrent = { ...touchStart };
+});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (touchStart) touchCurrent = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+});
+canvas.addEventListener('touchend', e => { touchStart = null; touchCurrent = null; });
+
+// Draw prism (triangle with rainbow refraction glow)
+function drawPrism(x, y, size, angle) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // Outer glow
+  const grad = ctx.createRadialGradient(0, 0, size * 0.5, 0, 0, size * 2.5);
+  grad.addColorStop(0, 'rgba(255,255,255,0.15)');
+  grad.addColorStop(0.5, 'rgba(100,150,255,0.06)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(0, 0, size * 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Triangle body
+  const h = size * 1.1;
+  ctx.beginPath();
+  ctx.moveTo(0, -h);
+  ctx.lineTo(-size * 0.7, h * 0.6);
+  ctx.lineTo(size * 0.7, h * 0.6);
+  ctx.closePath();
+
+  // Crystal fill
+  const bodyGrad = ctx.createLinearGradient(-size, -h, size, h);
+  bodyGrad.addColorStop(0, 'rgba(200,220,255,0.9)');
+  bodyGrad.addColorStop(0.3, 'rgba(150,180,255,0.7)');
+  bodyGrad.addColorStop(0.6, 'rgba(180,200,255,0.8)');
+  bodyGrad.addColorStop(1, 'rgba(220,230,255,0.6)');
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+
+  // Glass edge highlight
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Inner rainbow refraction
+  ctx.globalAlpha = 0.25;
+  for (let i = 0; i < RAINBOW.length; i++) {
+    ctx.fillStyle = RAINBOW[i];
+    ctx.fillRect(-size*0.3 + i*size*0.1, -h*0.3, size*0.12, h*0.8);
+  }
+  ctx.globalAlpha = 1;
+
+  // Specular highlight
+  ctx.beginPath();
+  ctx.moveTo(-size*0.15, -h*0.6);
+  ctx.lineTo(-size*0.35, h*0.1);
+  ctx.lineTo(-size*0.05, h*0.0);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// Draw trail
+function drawTrail(trail) {
+  if (trail.length < 2) return;
+  for (let i = 1; i < trail.length; i++) {
+    const t = i / trail.length;
+    const p = trail[i];
+    const ci = Math.floor((time * 0.02 + i * 0.1) % RAINBOW.length);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, t * 4 + 1, 0, Math.PI * 2);
+    ctx.fillStyle = RAINBOW[ci] + Math.floor(t * 180).toString(16).padStart(2,'0');
+    ctx.fill();
+  }
+}
+
+// Main update
+function update() {
+  if (!playing) return;
+  time++;
+  difficulty = 1 + time * 0.0003;
+
+  // Move prism
+  let dx = 0, dy = 0;
+  const speed = 4.5;
+  if (keys['arrowleft'] || keys['a']) dx -= speed;
+  if (keys['arrowright'] || keys['d']) dx += speed;
+  if (keys['arrowup'] || keys['w']) dy -= speed;
+  if (keys['arrowdown'] || keys['s']) dy += speed;
+
+  // Touch input
+  if (touchStart && touchCurrent) {
+    dx += (touchCurrent.x - touchStart.x) * 0.08;
+    dy += (touchCurrent.y - touchStart.y) * 0.08;
+  }
+
+  prism.x = Math.max(30, Math.min(W - 30, prism.x + dx));
+  prism.y = Math.max(30, Math.min(H - 30, prism.y + dy));
+  prism.angle = Math.sin(time * 0.03) * 0.1 + dx * 0.02;
+
+  // Trail
+  prism.trail.push({ x: prism.x, y: prism.y + prism.size * 0.4 });
+  if (prism.trail.length > 25) prism.trail.shift();
+
+  // Spawn beams
+  if (time % Math.max(40, 90 - Math.floor(difficulty * 8)) === 0) spawnBeam();
+  // Spawn orbs
+  if (time % Math.max(25, 60 - Math.floor(difficulty * 5)) === 0) spawnOrb();
+
+  // Update beams
+  for (let b of beams) {
+    b.y += b.speed;
+    // Check prism intersection
+    if (!b.hit && Math.abs(b.y - prism.y) < 12) {
+      if (prism.x > b.gapX && prism.x < b.gapX + b.gapW) {
+        // Prism is in the gap — split the light!
+        b.hit = true;
+        createSplitRays(prism.x, prism.y);
+        burstParticles(prism.x, prism.y, '#ffffff', 15, 3);
+        score += 10;
+        addFloatingText(prism.x, prism.y - 30, 'SPLIT! +10', '#fff');
+      } else if (prism.x < b.gapX || prism.x > b.gapX + b.gapW) {
+        // Hit by beam
+        b.hit = true;
+        lives--;
+        combo = 0;
+        comboEl.style.opacity = '0';
+        shakeTime = 15;
+        burstParticles(prism.x, prism.y, '#ff0044', 20, 4);
+        if (lives <= 0) { endGame(); return; }
+      }
+    }
+  }
+  beams = beams.filter(b => b.y < H + 20);
+
+  // Update orbs
+  for (let o of orbs) {
+    o.y += o.vy;
+    o.x += o.vx;
+    o.pulse += 0.06;
+    // Check collection
+    const dist = Math.hypot(o.x - prism.x, o.y - prism.y);
+    if (o.alive && dist < o.radius + prism.size * 0.6) {
+      o.alive = false;
+      combo++;
+      if (combo > maxCombo) maxCombo = combo;
+      const pts = 5 * combo;
+      score += pts;
+      burstParticles(o.x, o.y, o.color, 12, 3.5);
+      addFloatingText(o.x, o.y - 20, `+${pts}`, o.color);
+      comboEl.textContent = `x${combo}`;
+      comboEl.style.opacity = '1';
+      comboEl.style.color = o.color;
+    }
+  }
+  orbs = orbs.filter(o => o.alive && o.y < H + 30);
+
+  // Update particles
+  for (let p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.03;
+    p.life -= p.decay;
+  }
+  particles = particles.filter(p => p.life > 0);
+
+  // Update split rays
+  for (let r of splitRays) {
+    r.length = Math.min(r.length + r.speed, r.maxLength);
+    r.life -= 0.012;
+  }
+  splitRays = splitRays.filter(r => r.life > 0);
+
+  // Update floating texts
+  for (let ft of floatingTexts) {
+    ft.y += ft.vy;
+    ft.life -= 0.02;
+  }
+  floatingTexts = floatingTexts.filter(ft => ft.life > 0);
+
+  // Shake decay
+  if (shakeTime > 0) shakeTime--;
+
+  scoreEl.textContent = score;
+}
+
+// Main draw
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Camera shake
+  ctx.save();
+  if (shakeTime > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * shakeTime * 1.2,
+      (Math.random() - 0.5) * shakeTime * 1.2
+    );
+  }
+
+  // Background gradient
+  const bgGrad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W * 0.7);
+  bgGrad.addColorStop(0, '#0a0a1e');
+  bgGrad.addColorStop(1, '#05050f');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  for (let s of bgStars) {
+    s.twinkle += 0.02;
+    s.y += s.speed;
+    if (s.y > H) { s.y = 0; s.x = Math.random() * W; }
+    const alpha = 0.3 + Math.sin(s.twinkle) * 0.3;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${s.hue}, 60%, 80%, ${alpha})`;
+    ctx.fill();
+  }
+
+  if (!playing) { ctx.restore(); return; }
+
+  // Draw beams (white light lines)
+  for (let b of beams) {
+    const alpha = b.hit ? 0.15 : 0.6;
+    ctx.save();
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 12;
+    // Left segment
+    ctx.beginPath();
+    ctx.moveTo(0, b.y);
+    ctx.lineTo(b.gapX, b.y);
+    ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    // Right segment
+    ctx.beginPath();
+    ctx.moveTo(b.gapX + b.gapW, b.y);
+    ctx.lineTo(W, b.y);
+    ctx.stroke();
+    // Gap markers
+    if (!b.hit) {
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillRect(b.gapX, b.y - 15, b.gapW, 30);
+    }
+    ctx.restore();
+  }
+
+  // Draw split rays
+  for (let r of splitRays) {
+    ctx.save();
+    ctx.globalAlpha = r.life * 0.7;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = r.width * r.life;
+    ctx.shadowColor = r.color;
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    ctx.moveTo(r.x, r.y);
+    ctx.lineTo(
+      r.x + Math.cos(r.angle) * r.length,
+      r.y + Math.sin(r.angle) * r.length
+    );
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Draw orbs
+  for (let o of orbs) {
+    if (!o.alive) continue;
+    const pulseR = o.radius + Math.sin(o.pulse) * 3;
+    // Outer glow
+    ctx.save();
+    ctx.shadowColor = o.color;
+    ctx.shadowBlur = 25;
+    const oGrad = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, pulseR * 2);
+    oGrad.addColorStop(0, o.color + 'aa');
+    oGrad.addColorStop(0.5, o.color + '33');
+    oGrad.addColorStop(1, o.color + '00');
+    ctx.fillStyle = oGrad;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, pulseR * 2, 0, Math.PI * 2);
+    ctx.fill();
+    // Core
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, pulseR, 0, Math.PI * 2);
+    ctx.fillStyle = o.color;
+    ctx.fill();
+    // Highlight
+    ctx.beginPath();
+    ctx.arc(o.x - pulseR * 0.25, o.y - pulseR * 0.25, pulseR * 0.35, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Draw trail
+  drawTrail(prism.trail);
+
+  // Draw prism
+  drawPrism(prism.x, prism.y, prism.size, prism.angle);
+
+  // Lives indicator
+  for (let i = 0; i < lives; i++) {
+    const lx = W/2 - (lives - 1) * 14 + i * 28;
+    const ly = H - 30;
+    ctx.save();
+    ctx.translate(lx, ly);
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(-6, 5);
+    ctx.lineTo(6, 5);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(200,220,255,0.6)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Particles
+  for (let p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Floating texts
+  for (let ft of floatingTexts) {
+    ctx.save();
+    ctx.globalAlpha = ft.life;
+    ctx.font = 'bold 16px Courier New';
+    ctx.fillStyle = ft.color;
+    ctx.textAlign = 'center';
+    ctx.shadowColor = ft.color;
+    ctx.shadowBlur = 10;
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
