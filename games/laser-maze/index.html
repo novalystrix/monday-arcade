@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Laser Maze — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #060612;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+.back-link:hover { color: #a080ff; }
+
+h1 {
+  margin-top: 16px;
+  font-size: 28px;
+  background: linear-gradient(90deg, #ff3366, #ff6633, #ffcc00, #33ff66, #3399ff, #cc33ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+  animation: hueShift 4s linear infinite;
+}
+
+@keyframes hueShift {
+  0% { filter: hue-rotate(0deg); }
+  100% { filter: hue-rotate(360deg); }
+}
+
+#ui {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.info-row {
+  display: flex;
+  gap: 24px;
+  font-size: 14px;
+  color: #aaa;
+}
+
+.info-row span { color: #0ff; }
+
+canvas {
+  border: 2px solid #1a1a3a;
+  border-radius: 8px;
+  cursor: pointer;
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+.btn-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+button {
+  background: linear-gradient(135deg, #2a1a4e, #3a2a6e);
+  color: #c8b8ff;
+  border: 1px solid #5040a0;
+  padding: 8px 20px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+button:hover { background: linear-gradient(135deg, #3a2a6e, #5a3a9e); color: #fff; }
+
+#overlay {
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(6,6,18,0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+#overlay h2 {
+  font-size: 36px;
+  margin-bottom: 12px;
+}
+
+#overlay p {
+  color: #aaa;
+  margin-bottom: 20px;
+  font-size: 15px;
+}
+
+.star { color: #ffcc00; font-size: 28px; letter-spacing: 4px; }
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<a class="back-link" href="../../">← Arcade</a>
+<h1>🔦 Laser Maze</h1>
+
+<div id="ui">
+  <div class="info-row">
+    Level: <span id="levelNum">1</span> / <span id="totalLevels">20</span>
+    &nbsp;&nbsp; Moves: <span id="moves">0</span>
+    &nbsp;&nbsp; Stars: <span id="stars">-</span>
+  </div>
+  <canvas id="game"></canvas>
+  <div class="btn-row">
+    <button id="btnReset">↺ Reset</button>
+    <button id="btnHint">💡 Hint</button>
+  </div>
+</div>
+
+<div id="overlay" class="hidden">
+  <h2 id="overlayTitle"></h2>
+  <p id="overlayText"></p>
+  <div class="star" id="overlayStars"></div>
+  <div class="btn-row" style="margin-top:16px">
+    <button id="btnNext">Next Level →</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Responsive sizing
+const GRID = 8;
+let CELL;
+function resize() {
+  const maxW = Math.min(window.innerWidth - 32, 480);
+  CELL = Math.floor(maxW / GRID);
+  canvas.width = GRID * CELL;
+  canvas.height = GRID * CELL;
+}
+resize();
+window.addEventListener('resize', () => { resize(); draw(); });
+
+// Cell types
+const EMPTY = 0, WALL = 1, MIRROR_FWD = 2, MIRROR_BWD = 3, SPLITTER = 4, FILTER_R = 5, FILTER_G = 6, FILTER_B = 7;
+// Special cells marked separately: emitter, target
+
+const COLORS = {
+  bg: '#0a0a1e',
+  wall: '#1a1a3a',
+  wallEdge: '#2a2a5a',
+  mirror: '#c0c0ff',
+  mirrorFrame: '#6060aa',
+  emitter: '#ff3333',
+  target: '#33ff99',
+  targetGlow: '#00ff8855',
+  laser: '#ff0044',
+  laserGlow: 'rgba(255,0,68,0.15)',
+  grid: '#111128',
+};
+
+// Direction vectors: 0=right, 1=down, 2=left, 3=up
+const DX = [1, 0, -1, 0];
+const DY = [0, 1, 0, -1];
+
+// Levels: each is { emitter: {x,y,dir}, target: {x,y}, walls: [[x,y],...], mirrors: [[x,y,type],...], fixed: [[x,y],...] (non-rotatable), par: N }
+// mirror type: 2 = / (forward), 3 = \ (backward)
+const levels = [
+  // Level 1: Simple straight with one mirror
+  {
+    emitter: {x:0,y:3,dir:0}, target: {x:3,y:0},
+    walls: [], mirrors: [[3,3,2]], fixed: [], par: 1
+  },
+  // Level 2: Two mirrors
+  {
+    emitter: {x:0,y:1,dir:0}, target: {x:5,y:5},
+    walls: [[3,0],[3,1],[3,2]], mirrors: [[5,1,2],[5,5,0]], fixed: [], par: 2
+  },
+  // Level 3: L-shape
+  {
+    emitter: {x:0,y:4,dir:0}, target: {x:6,y:0},
+    walls: [[2,2],[2,3],[3,2]], mirrors: [[6,4,2],[6,0,0]], fixed: [], par: 2
+  },
+  // Level 4: Two turns
+  {
+    emitter: {x:0,y:0,dir:1}, target: {x:7,y:7},
+    walls: [[1,4],[2,4],[3,4]], mirrors: [[0,6,3],[4,6,2],[7,6,0]], fixed: [[0,6]], par: 2
+  },
+  // Level 5: Maze with walls
+  {
+    emitter: {x:0,y:3,dir:0}, target: {x:7,y:3},
+    walls: [[2,1],[2,2],[2,3],[2,4],[2,5],[5,2],[5,3],[5,4],[5,5],[5,6]],
+    mirrors: [[2,0,3],[5,0,2],[5,1,0]], fixed: [[2,0]], par: 2
+  },
+  // Level 6
+  {
+    emitter: {x:3,y:7,dir:3}, target: {x:7,y:0},
+    walls: [[1,1],[1,2],[2,1],[5,5],[5,6],[6,5]],
+    mirrors: [[3,2,3],[7,2,2]], fixed: [], par: 2
+  },
+  // Level 7: Three mirrors
+  {
+    emitter: {x:0,y:0,dir:0}, target: {x:0,y:7},
+    walls: [[3,3],[3,4],[4,3],[4,4]],
+    mirrors: [[6,0,3],[6,6,2],[0,6,0]], fixed: [[6,0]], par: 2
+  },
+  // Level 8
+  {
+    emitter: {x:7,y:0,dir:1}, target: {x:0,y:7},
+    walls: [[3,2],[4,2],[3,5],[4,5]],
+    mirrors: [[7,4,2],[3,4,0],[0,4,3]], fixed: [[7,4]], par: 2
+  },
+  // Level 9: Zigzag
+  {
+    emitter: {x:0,y:0,dir:0}, target: {x:7,y:7},
+    walls: [[2,1],[2,2],[5,5],[5,6]],
+    mirrors: [[4,0,3],[4,3,2],[7,3,3],[7,7,0]], fixed: [[4,0],[7,3]], par: 2
+  },
+  // Level 10: Dense maze
+  {
+    emitter: {x:0,y:4,dir:0}, target: {x:7,y:1},
+    walls: [[1,1],[1,2],[1,3],[3,4],[3,5],[3,6],[5,0],[5,1],[5,2]],
+    mirrors: [[2,4,2],[2,0,3],[5,0,0],[7,0,0]], fixed: [[2,4]], par: 3
+  },
+  // Level 11
+  {
+    emitter: {x:4,y:7,dir:3}, target: {x:0,y:0},
+    walls: [[2,3],[2,4],[3,3],[5,3],[5,4],[6,3]],
+    mirrors: [[4,2,2],[1,2,3],[1,0,0]], fixed: [[4,2]], par: 2
+  },
+  // Level 12
+  {
+    emitter: {x:7,y:7,dir:3}, target: {x:0,y:0},
+    walls: [[3,3],[3,4],[4,3],[4,4]],
+    mirrors: [[7,2,2],[2,2,3],[2,0,0],[0,0,0]], fixed: [[7,2]], par: 3
+  },
+  // Level 13: Spiral
+  {
+    emitter: {x:0,y:0,dir:1}, target: {x:3,y:3},
+    walls: [[1,2],[1,3],[1,4],[1,5],[2,5],[3,5],[4,5],[5,5],[5,4],[5,3],[5,2],[5,1],[4,1],[3,1]],
+    mirrors: [[0,6,3],[6,6,2],[6,0,2],[2,0,3],[2,2,0],[3,3,0]], fixed: [[0,6],[6,6],[6,0]], par: 3
+  },
+  // Level 14
+  {
+    emitter: {x:0,y:7,dir:0}, target: {x:7,y:0},
+    walls: [[2,2],[2,3],[5,4],[5,5]],
+    mirrors: [[3,7,2],[3,1,3],[6,1,2],[7,1,0]], fixed: [[3,7],[6,1]], par: 2
+  },
+  // Level 15: Complex
+  {
+    emitter: {x:0,y:0,dir:1}, target: {x:7,y:7},
+    walls: [[1,3],[2,3],[3,3],[4,4],[5,4],[6,4]],
+    mirrors: [[0,5,3],[3,5,2],[3,2,0],[7,2,3],[7,7,0]], fixed: [[0,5],[3,5]], par: 3
+  },
+  // Level 16
+  {
+    emitter: {x:0,y:3,dir:0}, target: {x:7,y:4},
+    walls: [[2,0],[2,1],[2,2],[2,4],[2,5],[5,2],[5,3],[5,5],[5,6],[5,7]],
+    mirrors: [[2,3,0],[4,3,2],[4,6,3],[5,1,3],[7,1,2],[7,4,0]], fixed: [[4,3],[5,1]], par: 4
+  },
+  // Level 17
+  {
+    emitter: {x:3,y:0,dir:1}, target: {x:4,y:7},
+    walls: [[1,2],[2,2],[1,5],[2,5],[5,2],[6,2],[5,5],[6,5]],
+    mirrors: [[3,3,3],[0,3,2],[0,6,3],[4,6,2],[4,3,0]], fixed: [[3,3],[0,6]], par: 3
+  },
+  // Level 18
+  {
+    emitter: {x:7,y:0,dir:2}, target: {x:0,y:7},
+    walls: [[3,1],[3,2],[4,1],[4,2],[3,5],[3,6],[4,5],[4,6]],
+    mirrors: [[2,0,3],[2,4,2],[5,4,3],[5,7,2],[0,7,0]], fixed: [[2,0],[5,4]], par: 3
+  },
+  // Level 19
+  {
+    emitter: {x:0,y:0,dir:0}, target: {x:7,y:7},
+    walls: [[1,1],[2,2],[3,3],[4,4],[5,5],[6,6]],
+    mirrors: [[6,0,3],[6,5,0],[7,5,3],[0,1,0],[0,7,3],[7,7,0]], fixed: [[6,0],[0,1],[0,7]], par: 3
+  },
+  // Level 20: Grand finale
+  {
+    emitter: {x:0,y:0,dir:0}, target: {x:7,y:7},
+    walls: [[2,1],[2,2],[2,3],[5,4],[5,5],[5,6],[3,6],[4,1]],
+    mirrors: [[7,0,3],[7,3,2],[4,3,3],[4,4,0],[2,4,3],[2,7,3],[7,7,0]], fixed: [[7,0],[4,3],[2,7]], par: 4
+  }
+];
+
+let currentLevel = 0;
+let grid = [];
+let emitter, target;
+let laserPath = [];
+let moveCount = 0;
+let solved = false;
+let particles = [];
+let hintUsed = false;
+let animFrame;
+let laserAnimT = 0;
+
+function loadLevel(idx) {
+  const lv = levels[idx];
+  grid = [];
+  for (let y = 0; y < GRID; y++) {
+    grid[y] = [];
+    for (let x = 0; x < GRID; x++) {
+      grid[y][x] = { type: EMPTY, fixed: false, originalType: EMPTY };
+    }
+  }
+  
+  lv.walls.forEach(([x,y]) => {
+    grid[y][x] = { type: WALL, fixed: true, originalType: WALL };
+  });
+  
+  lv.mirrors.forEach(([x,y,t]) => {
+    const type = t === 0 ? MIRROR_FWD : (t === 2 ? MIRROR_FWD : MIRROR_BWD);
+    const actualType = t === 2 ? MIRROR_FWD : (t === 3 ? MIRROR_BWD : MIRROR_FWD);
+    grid[y][x] = { type: actualType, fixed: false, originalType: actualType };
+  });
+  
+  lv.fixed.forEach(([x,y]) => {
+    if (grid[y] && grid[y][x]) grid[y][x].fixed = true;
+  });
+  
+  emitter = { ...lv.emitter };
+  target = { ...lv.target };
+  moveCount = 0;
+  solved = false;
+  hintUsed = false;
+  particles = [];
+  
+  document.getElementById('levelNum').textContent = idx + 1;
+  document.getElementById('moves').textContent = '0';
+  document.getElementById('stars').textContent = '-';
+  document.getElementById('overlay').classList.add('hidden');
+  
+  traceLaser();
+  draw();
+}
+
+function traceLaser() {
+  laserPath = [];
+  let x = emitter.x;
+  let y = emitter.y;
+  let dir = emitter.dir;
+  
+  // Start from emitter, move in direction
+  const visited = new Set();
+  let steps = 0;
+  const maxSteps = 200;
+  
+  // Add emitter position
+  laserPath.push({ x, y, dir });
+  
+  while (steps < maxSteps) {
+    const nx = x + DX[dir];
+    const ny = y + DY[dir];
+    
+    // Out of bounds
+    if (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID) break;
+    
+    // Hit wall
+    if (grid[ny][nx].type === WALL) break;
+    
+    // Visit tracking
+    const key = `${nx},${ny},${dir}`;
+    if (visited.has(key)) break;
+    visited.add(key);
+    
+    x = nx;
+    y = ny;
+    laserPath.push({ x, y, dir });
+    
+    // Check target hit
+    if (x === target.x && y === target.y) {
+      solved = true;
+      break;
+    }
+    
+    // Reflect on mirrors
+    const cell = grid[y][x];
+    if (cell.type === MIRROR_FWD) {
+      // / mirror: right->up, down->left, left->down, up->right
+      const reflectMap = [3, 2, 1, 0];
+      dir = reflectMap[dir];
+    } else if (cell.type === MIRROR_BWD) {
+      // \ mirror: right->down, down->right, left->up, up->left
+      const reflectMap = [1, 0, 3, 2];
+      dir = reflectMap[dir];
+    }
+    
+    steps++;
+  }
+  
+  if (solved) {
+    spawnWinParticles();
+  }
+}
+
+function spawnWinParticles() {
+  for (let i = 0; i < 40; i++) {
+    particles.push({
+      x: target.x * CELL + CELL / 2,
+      y: target.y * CELL + CELL / 2,
+      vx: (Math.random() - 0.5) * 6,
+      vy: (Math.random() - 0.5) * 6,
+      life: 1,
+      decay: 0.008 + Math.random() * 0.015,
+      color: ['#33ff99', '#00ffcc', '#ffcc00', '#ff66aa', '#66ccff'][Math.floor(Math.random() * 5)],
+      size: 2 + Math.random() * 4,
+    });
+  }
+}
+
+function updateParticles() {
+  particles = particles.filter(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.05;
+    p.life -= p.decay;
+    return p.life > 0;
+  });
+}
+
+function draw() {
+  laserAnimT += 0.03;
+  
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Grid lines
+  ctx.strokeStyle = COLORS.grid;
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= GRID; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * CELL, 0);
+    ctx.lineTo(i * CELL, GRID * CELL);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, i * CELL);
+    ctx.lineTo(GRID * CELL, i * CELL);
+    ctx.stroke();
+  }
+  
+  // Draw cells
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < GRID; x++) {
+      const cell = grid[y][x];
+      const cx = x * CELL;
+      const cy = y * CELL;
+      
+      if (cell.type === WALL) {
+        ctx.fillStyle = COLORS.wall;
+        ctx.fillRect(cx + 2, cy + 2, CELL - 4, CELL - 4);
+        ctx.strokeStyle = COLORS.wallEdge;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cx + 2, cy + 2, CELL - 4, CELL - 4);
+      }
+      
+      if (cell.type === MIRROR_FWD || cell.type === MIRROR_BWD) {
+        drawMirror(cx, cy, cell.type, cell.fixed);
+      }
+    }
+  }
+  
+  // Emitter
+  drawEmitter();
+  
+  // Target
+  drawTarget();
+  
+  // Laser beam with glow
+  drawLaser();
+  
+  // Particles
+  updateParticles();
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+  
+  animFrame = requestAnimationFrame(draw);
+}
+
+function drawMirror(cx, cy, type, fixed) {
+  const mid = CELL / 2;
+  const pad = CELL * 0.15;
+  
+  // Glow
+  ctx.shadowColor = fixed ? '#6666aa' : '#aaaaff';
+  ctx.shadowBlur = 8;
+  
+  ctx.strokeStyle = fixed ? '#555588' : COLORS.mirror;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  if (type === MIRROR_FWD) {
+    // / diagonal
+    ctx.moveTo(cx + pad, cy + CELL - pad);
+    ctx.lineTo(cx + CELL - pad, cy + pad);
+  } else {
+    // \ diagonal
+    ctx.moveTo(cx + pad, cy + pad);
+    ctx.lineTo(cx + CELL - pad, cy + CELL - pad);
+  }
+  ctx.stroke();
+  
+  // Mirror frame dots
+  ctx.fillStyle = fixed ? '#444466' : COLORS.mirrorFrame;
+  if (type === MIRROR_FWD) {
+    ctx.beginPath(); ctx.arc(cx + pad, cy + CELL - pad, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + CELL - pad, cy + pad, 3, 0, Math.PI * 2); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.arc(cx + pad, cy + pad, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + CELL - pad, cy + CELL - pad, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  
+  ctx.shadowBlur = 0;
+  
+  // Lock icon for fixed mirrors
+  if (fixed) {
+    ctx.fillStyle = '#555577';
+    ctx.font = `${CELL * 0.2}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText('🔒', cx + mid, cy + mid + CELL * 0.35);
+  }
+}
+
+function drawEmitter() {
+  const cx = emitter.x * CELL + CELL / 2;
+  const cy = emitter.y * CELL + CELL / 2;
+  const r = CELL * 0.3;
+  
+  // Pulsing glow
+  const pulse = 0.7 + 0.3 * Math.sin(laserAnimT * 3);
+  ctx.shadowColor = COLORS.emitter;
+  ctx.shadowBlur = 15 * pulse;
+  
+  ctx.fillStyle = COLORS.emitter;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Direction indicator
+  ctx.fillStyle = '#ffaaaa';
+  const ax = cx + DX[emitter.dir] * r * 1.3;
+  const ay = cy + DY[emitter.dir] * r * 1.3;
+  ctx.beginPath();
+  ctx.arc(ax, ay, 3, 0, Math.PI * 2);
+  ctx.fill();
+  
+  ctx.shadowBlur = 0;
+  
+  ctx.fillStyle = '#fff';
+  ctx.font = `${CELL * 0.25}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('E', cx, cy);
+}
+
+function drawTarget() {
+  const cx = target.x * CELL + CELL / 2;
+  const cy = target.y * CELL + CELL / 2;
+  const r = CELL * 0.3;
+  
+  const pulse = 0.6 + 0.4 * Math.sin(laserAnimT * 2);
+  
+  // Outer glow ring
+  ctx.strokeStyle = solved ? '#33ff99' : `rgba(51,255,153,${0.3 * pulse})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + 5 * pulse, 0, Math.PI * 2);
+  ctx.stroke();
+  
+  ctx.shadowColor = solved ? '#33ff99' : COLORS.target;
+  ctx.shadowBlur = solved ? 20 : 10 * pulse;
+  
+  ctx.fillStyle = solved ? '#33ff99' : '#1a8855';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  
+  ctx.shadowBlur = 0;
+  
+  ctx.fillStyle = solved ? '#fff' : '#aaffcc';
+  ctx.font = `${CELL * 0.25}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('★', cx, cy);
+}
+
+function drawLaser() {
+  if (laserPath.length < 2) return;
+  
+  // Glow layer
+  ctx.shadowColor = '#ff0044';
+  ctx.shadowBlur = 12;
+  ctx.strokeStyle = 'rgba(255,0,68,0.3)';
+  ctx.lineWidth = CELL * 0.15;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  
+  ctx.beginPath();
+  ctx.moveTo(laserPath[0].x * CELL + CELL / 2, laserPath[0].y * CELL + CELL / 2);
+  for (let i = 1; i < laserPath.length; i++) {
+    ctx.lineTo(laserPath[i].x * CELL + CELL / 2, laserPath[i].y * CELL + CELL / 2);
+  }
+  ctx.stroke();
+  
+  // Core beam
+  ctx.shadowBlur = 6;
+  ctx.strokeStyle = '#ff2255';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(laserPath[0].x * CELL + CELL / 2, laserPath[0].y * CELL + CELL / 2);
+  for (let i = 1; i < laserPath.length; i++) {
+    ctx.lineTo(laserPath[i].x * CELL + CELL / 2, laserPath[i].y * CELL + CELL / 2);
+  }
+  ctx.stroke();
+  
+  // Bright center
+  ctx.strokeStyle = '#ff8899';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(laserPath[0].x * CELL + CELL / 2, laserPath[0].y * CELL + CELL / 2);
+  for (let i = 1; i < laserPath.length; i++) {
+    ctx.lineTo(laserPath[i].x * CELL + CELL / 2, laserPath[i].y * CELL + CELL / 2);
+  }
+  ctx.stroke();
+  
+  ctx.shadowBlur = 0;
+  
+  // Animated pulse along beam
+  const totalLen = laserPath.length - 1;
+  if (totalLen > 0) {
+    const t = ((laserAnimT * 2) % totalLen);
+    const idx = Math.floor(t);
+    const frac = t - idx;
+    if (idx < totalLen) {
+      const px = (laserPath[idx].x + (laserPath[idx+1].x - laserPath[idx].x) * frac) * CELL + CELL / 2;
+      const py = (laserPath[idx].y + (laserPath[idx+1].y - laserPath[idx].y) * frac) * CELL + CELL / 2;
+      ctx.shadowColor = '#ff4477';
+      ctx.shadowBlur = 15;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+}
+
+// Click to rotate mirror
+canvas.addEventListener('click', (e) => {
+  if (solved) return;
+  
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const gx = Math.floor(mx / CELL);
+  const gy = Math.floor(my / CELL);
+  
+  if (gx < 0 || gx >= GRID || gy < 0 || gy >= GRID) return;
+  
+  const cell = grid[gy][gx];
+  if (cell.fixed) return;
+  
+  if (cell.type === MIRROR_FWD) {
+    cell.type = MIRROR_BWD;
+    moveCount++;
+  } else if (cell.type === MIRROR_BWD) {
+    cell.type = MIRROR_FWD;
+    moveCount++;
+  }
+  
+  document.getElementById('moves').textContent = moveCount;
+  
+  // Re-trace laser
+  solved = false;
+  traceLaser();
+  
+  if (solved) {
+    const par = levels[currentLevel].par;
+    const starCount = moveCount <= par ? 3 : (moveCount <= par + 2 ? 2 : 1);
+    const starStr = '★'.repeat(starCount) + '☆'.repeat(3 - starCount);
+    document.getElementById('stars').textContent = starStr;
+    
+    setTimeout(() => showOverlay(starCount, starStr), 600);
+  }
+});
+
+// Touch support
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  const touch = e.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const mx = touch.clientX - rect.left;
+  const my = touch.clientY - rect.top;
+  
+  const clickEvt = new MouseEvent('click', { clientX: touch.clientX, clientY: touch.clientY });
+  canvas.dispatchEvent(clickEvt);
+});
+
+function showOverlay(starCount, starStr) {
+  document.getElementById('overlay').classList.remove('hidden');
+  document.getElementById('overlayTitle').textContent = starCount === 3 ? '🌟 Perfect!' : (starCount === 2 ? '✨ Great!' : '👍 Solved!');
+  document.getElementById('overlayText').textContent = `Completed in ${moveCount} move${moveCount !== 1 ? 's' : ''}`;
+  document.getElementById('overlayStars').textContent = starStr;
+  document.getElementById('btnNext').textContent = currentLevel < levels.length - 1 ? 'Next Level →' : '🏆 You Win!';
+}
+
+document.getElementById('btnNext').addEventListener('click', () => {
+  if (currentLevel < levels.length - 1) {
+    currentLevel++;
+    loadLevel(currentLevel);
+  } else {
+    // Reset to beginning
+    currentLevel = 0;
+    loadLevel(0);
+  }
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  loadLevel(currentLevel);
+});
+
+document.getElementById('btnHint').addEventListener('click', () => {
+  if (hintUsed || solved) return;
+  hintUsed = true;
+  
+  // Flash all non-fixed mirrors briefly
+  const mirrors = [];
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < GRID; x++) {
+      if ((grid[y][x].type === MIRROR_FWD || grid[y][x].type === MIRROR_BWD) && !grid[y][x].fixed) {
+        mirrors.push({x, y});
+      }
+    }
+  }
+  
+  // Just show a subtle highlight on rotatable mirrors
+  if (mirrors.length > 0) {
+    const hint = mirrors[0];
+    const cx = hint.x * CELL + CELL / 2;
+    const cy = hint.y * CELL + CELL / 2;
+    
+    // Pulse effect
+    let pulseCount = 0;
+    const pulseInterval = setInterval(() => {
+      ctx.fillStyle = `rgba(255,255,100,${0.3 - pulseCount * 0.05})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, CELL * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      pulseCount++;
+      if (pulseCount > 6) clearInterval(pulseInterval);
+    }, 100);
+  }
+});
+
+document.getElementById('totalLevels').textContent = levels.length;
+
+// Start
+loadLevel(0);
+</script>
+</body>
+</html>
