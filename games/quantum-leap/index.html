@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Quantum Leap — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #06060c;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #6c5ce7; }
+#header {
+  text-align: center; margin-bottom: 6px;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #444466;
+}
+#header h1 {
+  font-size: 1.5rem; letter-spacing: 0.15em;
+  background: linear-gradient(90deg, #00e5ff, #7c4dff, #ff4081, #00e5ff);
+  background-size: 300% 100%;
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+}
+@keyframes shimmer { 0%{background-position:0% 50%} 100%{background-position:300% 50%} }
+#stats { display: flex; gap: 24px; font-size: 0.8rem; margin-top: 4px; color: #444466; justify-content: center; }
+#stats span { color: #7c4dff; }
+#dim-indicator {
+  position: fixed; top: 12px; right: 16px; z-index: 100;
+  font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase;
+  transition: color 0.3s;
+}
+canvas { border-radius: 8px; display: block; margin-top: 6px; }
+#overlay {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(6,6,12,0.94); z-index: 50;
+  transition: opacity 0.3s;
+}
+#overlay.hidden { opacity: 0; pointer-events: none; }
+#overlay h2 {
+  font-size: 2rem; letter-spacing: 0.15em; margin-bottom: 12px;
+  background: linear-gradient(90deg, #00e5ff, #7c4dff, #ff4081);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+#overlay .sub { color: #666688; font-size: 0.85rem; margin-bottom: 24px; }
+#overlay .score-line { color: #ffd93d; font-size: 1.2rem; margin-bottom: 8px; }
+#overlay .best-line { color: #7c4dff; font-size: 0.9rem; margin-bottom: 24px; }
+.btn {
+  padding: 10px 32px; border: 1px solid #7c4dff; background: transparent;
+  color: #7c4dff; font-family: inherit; font-size: 0.9rem;
+  letter-spacing: 0.1em; cursor: pointer; border-radius: 4px;
+  transition: all 0.2s;
+}
+.btn:hover { background: #7c4dff22; }
+#instructions {
+  color: #555577; font-size: 0.72rem; margin-top: 12px; text-align: center; line-height: 1.6;
+}
+#mute-btn {
+  position: fixed; bottom: 12px; right: 16px;
+  background: none; border: 1px solid #333; color: #555; font-size: 18px;
+  width: 36px; height: 36px; border-radius: 50%; cursor: pointer; z-index: 100;
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<div id="dim-indicator">⚛️ Dimension α</div>
+<div id="header">
+  <h1>⚛️ QUANTUM LEAP</h1>
+  <div id="stats">
+    Score <span id="score">0</span> &nbsp;|&nbsp; Best <span id="best">0</span>
+  </div>
+</div>
+<canvas id="c"></canvas>
+
+<div id="overlay">
+  <h2>QUANTUM LEAP</h2>
+  <div class="sub">Shift between dimensions to survive</div>
+  <div class="score-line" id="final-score" style="display:none"></div>
+  <div class="best-line" id="final-best" style="display:none"></div>
+  <button class="btn" id="start-btn">START</button>
+  <div id="instructions">
+    Space / Tap — shift dimension<br>
+    Up / W — jump<br>
+    Obstacles exist in one dimension — shift to phase through them
+  </div>
+</div>
+
+<button id="mute-btn" title="Toggle sound">🔊</button>
+
+<script src="../shared/sounds.js"></script>
+<script>
+'use strict';
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const finalScore = document.getElementById('final-score');
+const finalBest = document.getElementById('final-best');
+const startBtn = document.getElementById('start-btn');
+const dimIndicator = document.getElementById('dim-indicator');
+const muteBtn = document.getElementById('mute-btn');
+
+// === Constants ===
+const GRAVITY = 0.55;
+const JUMP_VEL = -11;
+const GROUND_Y_RATIO = 0.82;
+const PLAYER_SIZE = 22;
+const BASE_SPEED = 3.5;
+const SPEED_INC = 0.0008;
+const OBS_MIN_GAP = 200;
+const OBS_MAX_GAP = 360;
+const OBS_MIN_W = 28;
+const OBS_MAX_W = 60;
+const OBS_MIN_H = 40;
+const OBS_MAX_H = 130;
+const PARTICLE_COUNT = 6;
+const STAR_COUNT = 80;
+
+// Dimension colors
+const DIM = {
+  alpha: { bg: '#06060c', ground: '#1a1a2e', obs: '#00e5ff', glow: '#00e5ff', player: '#00e5ff', particle: '#00e5ff', label: 'Dimension α' },
+  beta:  { bg: '#0c0606', ground: '#2e1a1a', obs: '#ff4081', glow: '#ff4081', player: '#ff4081', particle: '#ff4081', label: 'Dimension β' }
+};
+
+// === State ===
+let W, H, groundY;
+let playing = false;
+let score = 0;
+let bestScore = parseInt(localStorage.getItem('quantum-leap-best') || '0');
+let speed, dim, playerX, playerY, playerVY, onGround;
+let obstacles = [];
+let particles = [];
+let stars = [];
+let shiftFlash = 0;
+let trail = [];
+let frameCount = 0;
+let lastObsX = 0;
+
+bestEl.textContent = bestScore;
+
+// === Resize ===
+function resize() {
+  const maxW = Math.min(window.innerWidth - 16, 600);
+  const maxH = Math.min(window.innerHeight - 120, 440);
+  W = canvas.width = maxW;
+  H = canvas.height = maxH;
+  groundY = H * GROUND_Y_RATIO;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// === Stars ===
+function initStars() {
+  stars = [];
+  for (let i = 0; i < STAR_COUNT; i++) {
+    stars.push({
+      x: Math.random() * W,
+      y: Math.random() * groundY,
+      r: Math.random() * 1.2 + 0.3,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.5 + 0.2
+    });
+  }
+}
+
+// === Particles ===
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 6,
+      vy: (Math.random() - 0.5) * 6,
+      life: 1,
+      decay: Math.random() * 0.03 + 0.02,
+      r: Math.random() * 3 + 1.5,
+      color
+    });
+  }
+}
+
+// === Obstacles ===
+function spawnObstacle() {
+  const w = OBS_MIN_W + Math.random() * (OBS_MAX_W - OBS_MIN_W);
+  const h = OBS_MIN_H + Math.random() * (OBS_MAX_H - OBS_MIN_H);
+  const gap = OBS_MIN_GAP + Math.random() * (OBS_MAX_GAP - OBS_MIN_GAP);
+  const x = Math.max(W + 20, lastObsX + gap);
+  // Randomly assign dimension — obstacle only blocks you in that dimension
+  const obsDim = Math.random() < 0.5 ? 'alpha' : 'beta';
+  // Some obstacles float, most sit on ground
+  const floating = Math.random() < 0.25;
+  const y = floating ? groundY - h - Math.random() * 60 - 30 : groundY - h;
+  obstacles.push({ x, y, w, h, dim: obsDim, scored: false });
+  lastObsX = x;
+}
+
+// === Init ===
+function init() {
+  score = 0;
+  speed = BASE_SPEED;
+  dim = 'alpha';
+  playerX = 80;
+  playerY = groundY - PLAYER_SIZE;
+  playerVY = 0;
+  onGround = true;
+  obstacles = [];
+  particles = [];
+  trail = [];
+  shiftFlash = 0;
+  frameCount = 0;
+  lastObsX = W;
+  initStars();
+  // Pre-spawn some obstacles
+  for (let i = 0; i < 4; i++) spawnObstacle();
+  updateDimUI();
+  scoreEl.textContent = '0';
+}
+
+function updateDimUI() {
+  const d = DIM[dim];
+  dimIndicator.textContent = '⚛️ ' + d.label;
+  dimIndicator.style.color = d.glow;
+}
+
+// === Shift Dimension ===
+function shiftDimension() {
+  dim = dim === 'alpha' ? 'beta' : 'alpha';
+  shiftFlash = 1;
+  updateDimUI();
+  spawnParticles(playerX + PLAYER_SIZE / 2, playerY + PLAYER_SIZE / 2, DIM[dim].particle, 12);
+  if (window.ArcadeSound) ArcadeSound.play('powerup');
+}
+
+// === Jump ===
+function jump() {
+  if (onGround) {
+    playerVY = JUMP_VEL;
+    onGround = false;
+    if (window.ArcadeSound) ArcadeSound.play('jump');
+  }
+}
+
+// === Input ===
+const keys = {};
+document.addEventListener('keydown', e => {
+  if (!playing) return;
+  if (e.code === 'Space' && !keys['Space']) { shiftDimension(); }
+  if ((e.code === 'ArrowUp' || e.code === 'KeyW') && !keys[e.code]) { jump(); }
+  keys[e.code] = true;
+  e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// Touch: left half = jump, right half = shift
+canvas.addEventListener('touchstart', e => {
+  if (!playing) return;
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  const x = touch.clientX - rect.left;
+  if (x < W / 2) jump();
+  else shiftDimension();
+});
+canvas.addEventListener('click', e => {
+  if (!playing) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  if (x < W / 2) jump();
+  else shiftDimension();
+});
+
+// === Collision ===
+function checkCollision() {
+  const px = playerX, py = playerY, ps = PLAYER_SIZE;
+  for (const obs of obstacles) {
+    if (obs.dim !== dim) continue; // Only collide in same dimension
+    if (px + ps > obs.x + 4 && px < obs.x + obs.w - 4 &&
+        py + ps > obs.y + 4 && py < obs.y + obs.h - 4) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// === Draw ===
+function drawBackground(d) {
+  // Sky
+  const grad = ctx.createLinearGradient(0, 0, 0, groundY);
+  grad.addColorStop(0, d.bg);
+  grad.addColorStop(1, d.ground + '44');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, groundY);
+  // Ground
+  ctx.fillStyle = d.ground;
+  ctx.fillRect(0, groundY, W, H - groundY);
+  // Ground line
+  ctx.strokeStyle = d.glow + '44';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, groundY);
+  ctx.lineTo(W, groundY);
+  ctx.stroke();
+}
+
+function drawStars(d) {
+  for (const s of stars) {
+    const alpha = 0.3 + 0.4 * Math.sin(s.twinkle + frameCount * 0.03);
+    ctx.fillStyle = d.glow + Math.floor(alpha * 255).toString(16).padStart(2, '0');
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawPlayer(d) {
+  const cx = playerX + PLAYER_SIZE / 2;
+  const cy = playerY + PLAYER_SIZE / 2;
+  
+  // Outer glow
+  const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, PLAYER_SIZE * 1.8);
+  glow.addColorStop(0, d.glow + '33');
+  glow.addColorStop(1, d.glow + '00');
+  ctx.fillStyle = glow;
+  ctx.fillRect(cx - PLAYER_SIZE * 2, cy - PLAYER_SIZE * 2, PLAYER_SIZE * 4, PLAYER_SIZE * 4);
+
+  // Core diamond shape
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(Math.PI / 4 + Math.sin(frameCount * 0.08) * 0.1);
+  
+  // Inner square
+  const halfSize = PLAYER_SIZE * 0.42;
+  ctx.fillStyle = d.player;
+  ctx.shadowColor = d.glow;
+  ctx.shadowBlur = 16;
+  ctx.fillRect(-halfSize, -halfSize, halfSize * 2, halfSize * 2);
+  
+  // Border
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(-halfSize, -halfSize, halfSize * 2, halfSize * 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawObstacles(d) {
+  for (const obs of obstacles) {
+    if (obs.x > W + 10 || obs.x + obs.w < -10) continue;
+    const isCurrentDim = obs.dim === dim;
+    const od = DIM[obs.dim];
+    
+    if (isCurrentDim) {
+      // Solid obstacle in current dimension
+      ctx.fillStyle = od.obs;
+      ctx.shadowColor = od.glow;
+      ctx.shadowBlur = 14;
+      ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+      ctx.shadowBlur = 0;
+      // Bright border
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+      // Inner pattern — horizontal lines
+      ctx.strokeStyle = od.obs + '66';
+      ctx.lineWidth = 0.5;
+      for (let ly = obs.y + 8; ly < obs.y + obs.h; ly += 8) {
+        ctx.beginPath();
+        ctx.moveTo(obs.x + 3, ly);
+        ctx.lineTo(obs.x + obs.w - 3, ly);
+        ctx.stroke();
+      }
+    } else {
+      // Ghost obstacle from other dimension — translucent
+      ctx.fillStyle = od.obs + '18';
+      ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+      ctx.strokeStyle = od.obs + '30';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+      ctx.setLineDash([]);
+    }
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawTrail(d) {
+  for (let i = 0; i < trail.length; i++) {
+    const t = trail[i];
+    const alpha = t.life * 0.4;
+    ctx.fillStyle = d.glow + Math.floor(alpha * 255).toString(16).padStart(2, '0');
+    const s = PLAYER_SIZE * 0.3 * t.life;
+    ctx.fillRect(t.x - s / 2, t.y - s / 2, s, s);
+  }
+}
+
+function drawShiftFlash(d) {
+  if (shiftFlash > 0) {
+    ctx.fillStyle = d.glow + Math.floor(shiftFlash * 40).toString(16).padStart(2, '0');
+    ctx.fillRect(0, 0, W, H);
+    // Horizontal scan line
+    const lineY = H * (1 - shiftFlash);
+    ctx.strokeStyle = d.glow + '88';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, lineY);
+    ctx.lineTo(W, lineY);
+    ctx.stroke();
+  }
+}
+
+function drawDimLabel(d) {
+  ctx.fillStyle = d.glow + '22';
+  ctx.font = 'bold 60px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText(dim === 'alpha' ? 'α' : 'β', W / 2, H / 2 + 20);
+}
+
+function drawTouchZones() {
+  if (!('ontouchstart' in window)) return;
+  ctx.fillStyle = '#ffffff08';
+  ctx.fillRect(0, 0, W / 2, H);
+  ctx.fillStyle = '#ffffff04';
+  ctx.font = '10px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffffff15';
+  ctx.fillText('JUMP', W / 4, H - 12);
+  ctx.fillText('SHIFT', W * 3 / 4, H - 12);
+}
+
+// === Update ===
+function update() {
+  frameCount++;
+  speed += SPEED_INC;
+
+  // Player physics
+  playerVY += GRAVITY;
+  playerY += playerVY;
+  if (playerY >= groundY - PLAYER_SIZE) {
+    playerY = groundY - PLAYER_SIZE;
+    playerVY = 0;
+    onGround = true;
+  }
+
+  // Trail
+  if (frameCount % 2 === 0) {
+    trail.push({ x: playerX + PLAYER_SIZE / 2, y: playerY + PLAYER_SIZE / 2, life: 1 });
+  }
+  for (let i = trail.length - 1; i >= 0; i--) {
+    trail[i].life -= 0.05;
+    if (trail[i].life <= 0) trail.splice(i, 1);
+  }
+
+  // Move obstacles
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    obstacles[i].x -= speed;
+    // Score
+    if (!obstacles[i].scored && obstacles[i].x + obstacles[i].w < playerX) {
+      obstacles[i].scored = true;
+      score++;
+      scoreEl.textContent = score;
+      if (score % 10 === 0 && window.ArcadeSound) ArcadeSound.play('levelup');
+    }
+    // Remove off-screen
+    if (obstacles[i].x + obstacles[i].w < -20) {
+      obstacles.splice(i, 1);
+    }
+  }
+
+  // Spawn new obstacles
+  const rightmostX = obstacles.length ? Math.max(...obstacles.map(o => o.x + o.w)) : 0;
+  if (rightmostX < W + 100) {
+    spawnObstacle();
+  }
+
+  // Move stars
+  for (const s of stars) {
+    s.x -= speed * s.speed * 0.3;
+    if (s.x < -2) { s.x = W + 2; s.y = Math.random() * groundY; }
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= p.decay;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Shift flash
+  if (shiftFlash > 0) shiftFlash -= 0.06;
+
+  // Collision
+  if (checkCollision()) {
+    gameOver();
+  }
+}
+
+// === Game Over ===
+function gameOver() {
+  playing = false;
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('quantum-leap-best', bestScore);
+    bestEl.textContent = bestScore;
+  }
+  if (window.ArcadeSound) ArcadeSound.play('gameover');
+  spawnParticles(playerX + PLAYER_SIZE / 2, playerY + PLAYER_SIZE / 2, DIM[dim].particle, 20);
+
+  // Show overlay
+  setTimeout(() => {
+    finalScore.textContent = 'Score: ' + score;
+    finalScore.style.display = 'block';
+    finalBest.textContent = 'Best: ' + bestScore;
+    finalBest.style.display = 'block';
+    startBtn.textContent = 'RETRY';
+    overlay.classList.remove('hidden');
+  }, 400);
+}
+
+// === Render Loop ===
+function frame() {
+  const d = DIM[dim];
+  
+  // Clear
+  ctx.clearRect(0, 0, W, H);
+  
+  drawBackground(d);
+  drawDimLabel(d);
+  drawStars(d);
+  drawTouchZones();
+  
+  if (playing) {
+    update();
+  }
+  
+  drawTrail(d);
+  drawObstacles(d);
+  drawParticles();
+  drawPlayer(d);
+  drawShiftFlash(d);
+  
+  requestAnimationFrame(frame);
+}
+
+// === Start ===
+startBtn.addEventListener('click', () => {
+  init();
+  playing = true;
+  overlay.classList.add('hidden');
+  if (window.ArcadeSound) ArcadeSound.play('start');
+});
+
+// === Mute ===
+let muted = localStorage.getItem('arcade-muted') === '1';
+muteBtn.textContent = muted ? '🔇' : '🔊';
+if (muted && window.ArcadeSound) ArcadeSound.mute();
+muteBtn.addEventListener('click', () => {
+  muted = !muted;
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+  localStorage.setItem('arcade-muted', muted ? '1' : '0');
+  if (window.ArcadeSound) { muted ? ArcadeSound.mute() : ArcadeSound.unmute(); }
+});
+
+// Start render loop
+frame();
+</script>
+</body>
+</html>
