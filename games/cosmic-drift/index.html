@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Cosmic Drift — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #020010;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+.back-link:hover { color: #a070ff; }
+h1 {
+  margin-top: 10px;
+  font-size: 24px;
+  background: linear-gradient(90deg, #ff6ec7, #40e0d0, #a78bfa, #ff6ec7);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+  z-index: 10;
+}
+@keyframes shimmer { 0%{background-position:300% 0} 100%{background-position:-300% 0} }
+#hud {
+  display: flex;
+  gap: 24px;
+  margin: 6px 0 4px;
+  font-size: 14px;
+  color: #888;
+  z-index: 10;
+}
+#hud span { color: #40e0d0; font-weight: bold; }
+#hud .best { color: #ff6ec7; }
+canvas { display: block; }
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  background: rgba(2, 0, 16, 0.85);
+  backdrop-filter: blur(8px);
+  transition: opacity 0.3s;
+}
+#overlay.hidden { opacity: 0; pointer-events: none; }
+#overlay h2 {
+  font-size: 36px;
+  margin-bottom: 8px;
+  background: linear-gradient(90deg, #ff6ec7, #40e0d0);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+#overlay .subtitle {
+  font-size: 14px;
+  color: #aaa;
+  margin-bottom: 24px;
+}
+#overlay .score-display {
+  font-size: 48px;
+  color: #fff;
+  margin-bottom: 4px;
+}
+#overlay .best-display {
+  font-size: 16px;
+  color: #ff6ec7;
+  margin-bottom: 28px;
+}
+.start-btn {
+  padding: 14px 48px;
+  font-size: 18px;
+  font-family: inherit;
+  background: linear-gradient(135deg, #ff6ec7, #a78bfa);
+  border: none;
+  border-radius: 30px;
+  color: #fff;
+  cursor: pointer;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 0 30px rgba(255, 110, 199, 0.4);
+}
+.start-btn:hover { transform: scale(1.05); box-shadow: 0 0 40px rgba(255, 110, 199, 0.6); }
+.controls-hint {
+  margin-top: 16px;
+  font-size: 12px;
+  color: #666;
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<h1>🌌 Cosmic Drift</h1>
+<div id="hud">
+  <div>Score <span id="score">0</span></div>
+  <div>Distance <span id="distance">0</span>m</div>
+  <div>Best <span id="best" class="best">0</span></div>
+</div>
+<canvas id="game"></canvas>
+
+<div id="overlay">
+  <h2>Cosmic Drift</h2>
+  <div class="subtitle">Drift through the neon cosmos</div>
+  <div class="score-display" id="finalScore" style="display:none">0</div>
+  <div class="best-display" id="finalBest" style="display:none">Best: 0</div>
+  <button class="start-btn" id="startBtn">LAUNCH</button>
+  <div class="controls-hint">Click / Tap to thrust • Arrow keys or WASD to steer</div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const distEl = document.getElementById('distance');
+const bestEl = document.getElementById('best');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const finalScoreEl = document.getElementById('finalScore');
+const finalBestEl = document.getElementById('finalBest');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// State
+let playing = false;
+let score = 0;
+let distance = 0;
+let bestScore = parseInt(localStorage.getItem('cosmicDriftBest') || '0');
+bestEl.textContent = bestScore;
+
+// Ship
+let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, thrust: false, trail: [] };
+// Camera
+let cam = { x: 0, y: 0, shake: 0 };
+// Particles
+let particles = [];
+let stardust = [];
+let asteroids = [];
+let stars = [];
+let nebulae = [];
+let collectFx = [];
+let shockwaves = [];
+
+// Input
+let keys = {};
+let thrusting = false;
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+window.addEventListener('mousedown', () => { thrusting = true; });
+window.addEventListener('mouseup', () => { thrusting = false; });
+window.addEventListener('touchstart', e => { e.preventDefault(); thrusting = true; }, { passive: false });
+window.addEventListener('touchend', () => { thrusting = false; });
+
+// Generate background stars
+function genStars() {
+  stars = [];
+  for (let i = 0; i < 300; i++) {
+    stars.push({
+      x: (Math.random() - 0.5) * 20000,
+      y: (Math.random() - 0.5) * 20000,
+      r: Math.random() * 1.8 + 0.3,
+      b: Math.random() * 0.5 + 0.5,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.5 + 0.5
+    });
+  }
+  nebulae = [];
+  for (let i = 0; i < 12; i++) {
+    nebulae.push({
+      x: (Math.random() - 0.5) * 15000,
+      y: (Math.random() - 0.5) * 15000,
+      r: Math.random() * 300 + 150,
+      color: ['#ff6ec720', '#40e0d015', '#a78bfa18', '#ff408820'][Math.floor(Math.random() * 4)]
+    });
+  }
+}
+
+function spawnStardust(cx, cy, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * 800 + 300;
+    stardust.push({
+      x: cx + Math.cos(angle) * dist,
+      y: cy + Math.sin(angle) * dist,
+      r: Math.random() * 4 + 3,
+      pulse: Math.random() * Math.PI * 2,
+      value: Math.random() < 0.15 ? 50 : Math.random() < 0.3 ? 25 : 10,
+      hue: Math.random() * 60 + 160 // teal to purple
+    });
+  }
+}
+
+function spawnAsteroids(cx, cy, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * 900 + 400;
+    const size = Math.random() * 25 + 12;
+    // Generate jagged shape
+    const verts = [];
+    const n = Math.floor(Math.random() * 4) + 6;
+    for (let j = 0; j < n; j++) {
+      const a = (j / n) * Math.PI * 2;
+      const r = size * (0.7 + Math.random() * 0.6);
+      verts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
+    }
+    asteroids.push({
+      x: cx + Math.cos(angle) * dist,
+      y: cy + Math.sin(angle) * dist,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5,
+      size,
+      verts,
+      rot: Math.random() * Math.PI * 2,
+      rotSpeed: (Math.random() - 0.5) * 0.02
+    });
+  }
+}
+
+function init() {
+  ship = { x: 0, y: 0, vx: 2, vy: 0, angle: 0, trail: [] };
+  cam = { x: 0, y: 0, shake: 0 };
+  score = 0;
+  distance = 0;
+  particles = [];
+  stardust = [];
+  asteroids = [];
+  collectFx = [];
+  shockwaves = [];
+  genStars();
+  spawnStardust(0, 0, 30);
+  spawnAsteroids(0, 0, 15);
+}
+
+function startGame() {
+  init();
+  playing = true;
+  overlay.classList.add('hidden');
+  startBtn.textContent = 'RELAUNCH';
+  finalScoreEl.style.display = 'none';
+  finalBestEl.style.display = 'none';
+  loop();
+}
+
+function endGame() {
+  playing = false;
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('cosmicDriftBest', bestScore);
+    bestEl.textContent = bestScore;
+  }
+  finalScoreEl.textContent = score;
+  finalScoreEl.style.display = 'block';
+  finalBestEl.textContent = 'Best: ' + bestScore;
+  finalBestEl.style.display = 'block';
+  overlay.classList.remove('hidden');
+  // death shockwave
+  shockwaves.push({ x: ship.x, y: ship.y, r: 0, maxR: 250, alpha: 1 });
+  // death particles
+  for (let i = 0; i < 60; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = Math.random() * 5 + 2;
+    particles.push({
+      x: ship.x, y: ship.y,
+      vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: 1, decay: Math.random() * 0.015 + 0.01,
+      r: Math.random() * 3 + 1,
+      color: Math.random() < 0.5 ? '#ff6ec7' : '#40e0d0'
+    });
+  }
+}
+
+startBtn.addEventListener('click', startGame);
+
+// Main loop
+let lastTime = 0;
+function loop(now = 0) {
+  const dt = Math.min((now - lastTime) / 16.67, 3);
+  lastTime = now;
+
+  if (playing) update(dt);
+  draw();
+  if (playing) requestAnimationFrame(loop);
+  else {
+    // Keep drawing particles after death
+    let hasParticles = particles.length > 0 || shockwaves.length > 0;
+    if (hasParticles) {
+      updateParticles(dt);
+      requestAnimationFrame(loop);
+    }
+  }
+}
+
+function update(dt) {
+  // Steering
+  let steer = 0;
+  if (keys['arrowleft'] || keys['a']) steer -= 1;
+  if (keys['arrowright'] || keys['d']) steer += 1;
+  ship.angle += steer * 0.05 * dt;
+
+  // Thrust
+  const thrustPower = thrusting || keys['arrowup'] || keys['w'] || keys[' '];
+  if (thrustPower) {
+    ship.vx += Math.cos(ship.angle) * 0.12 * dt;
+    ship.vy += Math.sin(ship.angle) * 0.12 * dt;
+    // Thrust particles
+    for (let i = 0; i < 3; i++) {
+      const spread = (Math.random() - 0.5) * 0.6;
+      const a = ship.angle + Math.PI + spread;
+      const s = Math.random() * 2 + 1.5;
+      particles.push({
+        x: ship.x - Math.cos(ship.angle) * 12,
+        y: ship.y - Math.sin(ship.angle) * 12,
+        vx: Math.cos(a) * s + ship.vx * 0.3,
+        vy: Math.sin(a) * s + ship.vy * 0.3,
+        life: 1, decay: Math.random() * 0.03 + 0.02,
+        r: Math.random() * 2.5 + 1,
+        color: Math.random() < 0.5 ? '#ff6ec7' : '#a78bfa'
+      });
+    }
+  }
+
+  // Friction (very slight in space)
+  ship.vx *= 0.998;
+  ship.vy *= 0.998;
+
+  // Move ship
+  ship.x += ship.vx * dt;
+  ship.y += ship.vy * dt;
+  distance = Math.floor(Math.sqrt(ship.x * ship.x + ship.y * ship.y) / 10);
+  distEl.textContent = distance;
+
+  // Trail
+  ship.trail.push({ x: ship.x, y: ship.y, alpha: 1 });
+  if (ship.trail.length > 60) ship.trail.shift();
+  ship.trail.forEach(t => t.alpha *= 0.96);
+
+  // Camera follow
+  cam.x += (ship.x - cam.x) * 0.08 * dt;
+  cam.y += (ship.y - cam.y) * 0.08 * dt;
+  cam.shake *= 0.9;
+
+  // Stardust collection
+  for (let i = stardust.length - 1; i >= 0; i--) {
+    const s = stardust[i];
+    const dx = ship.x - s.x, dy = ship.y - s.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < s.r + 14) {
+      score += s.value;
+      scoreEl.textContent = score;
+      // Collect effect
+      collectFx.push({ x: s.x, y: s.y, alpha: 1, text: '+' + s.value, vy: -1.5 });
+      for (let j = 0; j < 8; j++) {
+        const a = Math.random() * Math.PI * 2;
+        particles.push({
+          x: s.x, y: s.y,
+          vx: Math.cos(a) * 2, vy: Math.sin(a) * 2,
+          life: 1, decay: 0.04, r: 2,
+          color: `hsl(${s.hue}, 100%, 70%)`
+        });
+      }
+      cam.shake = 3;
+      stardust.splice(i, 1);
+    }
+    s.pulse += 0.03;
+  }
+
+  // Asteroid collision
+  for (const a of asteroids) {
+    a.x += a.vx * dt;
+    a.y += a.vy * dt;
+    a.rot += a.rotSpeed * dt;
+    const dx = ship.x - a.x, dy = ship.y - a.y;
+    if (Math.sqrt(dx * dx + dy * dy) < a.size + 8) {
+      endGame();
+      return;
+    }
+  }
+
+  // Spawn more stuff as player drifts further
+  if (stardust.length < 20) spawnStardust(ship.x, ship.y, 15);
+  if (asteroids.length < 12) spawnAsteroids(ship.x, ship.y, 8);
+
+  // Cull far-away objects
+  stardust = stardust.filter(s => Math.abs(s.x - ship.x) < 2000 && Math.abs(s.y - ship.y) < 2000);
+  asteroids = asteroids.filter(a => Math.abs(a.x - ship.x) < 2000 && Math.abs(a.y - ship.y) < 2000);
+
+  updateParticles(dt);
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= p.decay * dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+  for (let i = collectFx.length - 1; i >= 0; i--) {
+    const f = collectFx[i];
+    f.y += f.vy;
+    f.alpha -= 0.02;
+    if (f.alpha <= 0) collectFx.splice(i, 1);
+  }
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.r += 4;
+    s.alpha -= 0.015;
+    if (s.alpha <= 0 || s.r > s.maxR) shockwaves.splice(i, 1);
+  }
+}
+
+function draw() {
+  ctx.fillStyle = '#020010';
+  ctx.fillRect(0, 0, W, H);
+
+  const ox = W / 2 - cam.x + (Math.random() - 0.5) * cam.shake;
+  const oy = H / 2 - cam.y + (Math.random() - 0.5) * cam.shake;
+  ctx.save();
+  ctx.translate(ox, oy);
+
+  // Nebulae
+  for (const n of nebulae) {
+    const grd = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
+    grd.addColorStop(0, n.color);
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.fillRect(n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
+  }
+
+  // Stars (parallax)
+  const time = Date.now() * 0.001;
+  for (const s of stars) {
+    const px = s.x * 0.3;
+    const py = s.y * 0.3;
+    const twinkle = (Math.sin(time * s.speed + s.twinkle) + 1) * 0.5;
+    const alpha = s.b * (0.5 + twinkle * 0.5);
+    ctx.beginPath();
+    ctx.arc(px, py, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fill();
+  }
+
+  // Ship trail
+  if (ship.trail.length > 1) {
+    for (let i = 1; i < ship.trail.length; i++) {
+      const t = ship.trail[i];
+      const prev = ship.trail[i - 1];
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(t.x, t.y);
+      ctx.strokeStyle = `rgba(167, 139, 250, ${t.alpha * 0.5})`;
+      ctx.lineWidth = t.alpha * 3;
+      ctx.stroke();
+    }
+  }
+
+  // Stardust
+  for (const s of stardust) {
+    const glow = Math.sin(s.pulse) * 0.3 + 0.7;
+    const r = s.r * glow;
+    // Outer glow
+    const grd = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 4);
+    grd.addColorStop(0, `hsla(${s.hue}, 100%, 70%, 0.3)`);
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.fillRect(s.x - r * 4, s.y - r * 4, r * 8, r * 8);
+    // Core
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${s.hue}, 100%, 80%, ${glow})`;
+    ctx.fill();
+    // Sparkle cross
+    ctx.strokeStyle = `hsla(${s.hue}, 100%, 90%, ${glow * 0.6})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(s.x - r * 2, s.y);
+    ctx.lineTo(s.x + r * 2, s.y);
+    ctx.moveTo(s.x, s.y - r * 2);
+    ctx.lineTo(s.x, s.y + r * 2);
+    ctx.stroke();
+  }
+
+  // Asteroids
+  for (const a of asteroids) {
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.rotate(a.rot);
+    ctx.beginPath();
+    ctx.moveTo(a.verts[0].x, a.verts[0].y);
+    for (let i = 1; i < a.verts.length; i++) {
+      ctx.lineTo(a.verts[i].x, a.verts[i].y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fill();
+    ctx.strokeStyle = '#4a3080';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Glow edge
+    ctx.shadowColor = '#6040cc';
+    ctx.shadowBlur = 8;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Collect FX (floating text)
+  for (const f of collectFx) {
+    ctx.globalAlpha = f.alpha;
+    ctx.fillStyle = '#40e0d0';
+    ctx.font = 'bold 14px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // Shockwaves
+  for (const s of shockwaves) {
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255, 110, 199, ${s.alpha})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Ship
+  if (playing) {
+    ctx.save();
+    ctx.translate(ship.x, ship.y);
+    ctx.rotate(ship.angle);
+    // Engine glow
+    const thrustOn = thrusting || keys['arrowup'] || keys['w'] || keys[' '];
+    if (thrustOn) {
+      const grd = ctx.createRadialGradient(-10, 0, 0, -10, 0, 20);
+      grd.addColorStop(0, 'rgba(255, 110, 199, 0.6)');
+      grd.addColorStop(1, 'transparent');
+      ctx.fillStyle = grd;
+      ctx.fillRect(-30, -20, 40, 40);
+    }
+    // Ship body
+    ctx.beginPath();
+    ctx.moveTo(16, 0);
+    ctx.lineTo(-10, -8);
+    ctx.lineTo(-6, 0);
+    ctx.lineTo(-10, 8);
+    ctx.closePath();
+    ctx.fillStyle = '#c0a0ff';
+    ctx.fill();
+    ctx.strokeStyle = '#ff6ec7';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Glow
+    ctx.shadowColor = '#ff6ec7';
+    ctx.shadowBlur = 15;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+// Initial render
+draw();
+</script>
+</body>
+</html>
