@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Gravity Pool — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #030318;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+}
+.back-link:hover { opacity: 1; }
+canvas { display: block; border-radius: 8px; }
+#ui {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  text-align: right;
+  font-size: 14px;
+  z-index: 100;
+  pointer-events: none;
+}
+#ui .score { font-size: 22px; color: #a080ff; }
+#ui .level { font-size: 13px; color: #607090; margin-top: 4px; }
+#ui .shots { font-size: 13px; color: #607090; margin-top: 2px; }
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3,3,24,0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  text-align: center;
+}
+#overlay h1 {
+  font-size: 36px;
+  background: linear-gradient(135deg, #a080ff, #40d0ff, #ff60a0);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+}
+#overlay .sub {
+  color: #607090;
+  font-size: 14px;
+  margin-bottom: 28px;
+  max-width: 360px;
+  line-height: 1.5;
+}
+#overlay button {
+  background: linear-gradient(135deg, #6040cc, #40a0ff);
+  color: #fff;
+  border: none;
+  padding: 14px 36px;
+  border-radius: 24px;
+  font-size: 16px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.15s;
+}
+#overlay button:hover { transform: scale(1.05); }
+#overlay .result {
+  font-size: 20px;
+  color: #a080ff;
+  margin-bottom: 6px;
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<div id="ui">
+  <div class="score" id="scoreDisplay">0</div>
+  <div class="level" id="levelDisplay">Level 1</div>
+  <div class="shots" id="shotsDisplay"></div>
+</div>
+<canvas id="c"></canvas>
+<div id="overlay">
+  <h1>🪐 Gravity Pool</h1>
+  <div class="sub">Aim through warped spacetime. Gravity bends your shots — sink all orbs before you run out of moves.</div>
+  <button id="startBtn">Play</button>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const scoreDisplay = document.getElementById('scoreDisplay');
+const levelDisplay = document.getElementById('levelDisplay');
+const shotsDisplay = document.getElementById('shotsDisplay');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Physics constants
+const FRICTION = 0.992;
+const MIN_VEL = 0.15;
+const POCKET_R = 22;
+const BALL_R = 12;
+const CUE_R = 13;
+const G_STRENGTH = 280;
+const MAX_POWER = 18;
+
+// State
+let balls = [];
+let wells = [];
+let pockets = [];
+let cue = null;
+let aiming = false;
+let aimStart = null;
+let aimCurrent = null;
+let score = 0;
+let level = 0;
+let shotsLeft = 0;
+let gameActive = false;
+let sinking = []; // animations
+let particles = [];
+let trajectoryDots = [];
+let stars = [];
+
+// Generate background stars
+for (let i = 0; i < 200; i++) {
+  stars.push({
+    x: Math.random(), y: Math.random(),
+    r: Math.random() * 1.5 + 0.3,
+    a: Math.random() * 0.5 + 0.2,
+    twinkle: Math.random() * Math.PI * 2,
+    speed: Math.random() * 0.02 + 0.005
+  });
+}
+
+const COLORS = [
+  '#ff6090', '#60c0ff', '#a080ff', '#ffb040',
+  '#40ffa0', '#ff4060', '#40d0d0', '#ffd060',
+  '#c060ff', '#60ff80', '#ff8040', '#80a0ff'
+];
+
+function generateLevel(n) {
+  level = n;
+  balls = [];
+  wells = [];
+  pockets = [];
+  sinking = [];
+  particles = [];
+
+  const cx = W / 2, cy = H / 2;
+  const area = Math.min(W, H) * 0.35;
+
+  // Place pockets around edges
+  const pocketCount = 4 + Math.min(n, 4);
+  for (let i = 0; i < pocketCount; i++) {
+    const angle = (i / pocketCount) * Math.PI * 2 + Math.PI / pocketCount;
+    pockets.push({
+      x: cx + Math.cos(angle) * area * 0.95,
+      y: cy + Math.sin(angle) * area * 0.95,
+      r: POCKET_R,
+      glow: 0
+    });
+  }
+
+  // Place gravity wells
+  const wellCount = Math.min(1 + Math.floor(n / 2), 5);
+  for (let i = 0; i < wellCount; i++) {
+    const angle = (i / wellCount) * Math.PI * 2 + 0.3;
+    const dist = area * (0.3 + Math.random() * 0.3);
+    const mass = (0.6 + Math.random() * 0.8) * (n > 3 ? 1.3 : 1);
+    wells.push({
+      x: cx + Math.cos(angle) * dist,
+      y: cy + Math.sin(angle) * dist,
+      mass: mass,
+      r: 18 + mass * 10,
+      pulse: Math.random() * Math.PI * 2,
+      repulsor: n > 4 && Math.random() > 0.6
+    });
+  }
+
+  // Place target balls
+  const ballCount = 3 + Math.min(n, 6);
+  for (let i = 0; i < ballCount; i++) {
+    let bx, by, valid;
+    let tries = 0;
+    do {
+      valid = true;
+      const angle = Math.random() * Math.PI * 2;
+      const dist = area * (0.2 + Math.random() * 0.5);
+      bx = cx + Math.cos(angle) * dist;
+      by = cy + Math.sin(angle) * dist;
+      for (const w of wells) {
+        if (Math.hypot(bx - w.x, by - w.y) < w.r + BALL_R + 15) valid = false;
+      }
+      for (const b of balls) {
+        if (Math.hypot(bx - b.x, by - b.y) < BALL_R * 3) valid = false;
+      }
+      tries++;
+    } while (!valid && tries < 100);
+
+    balls.push({
+      x: bx, y: by, vx: 0, vy: 0,
+      color: COLORS[i % COLORS.length],
+      alive: true, r: BALL_R
+    });
+  }
+
+  // Place cue ball
+  cue = {
+    x: cx, y: cy + area * 0.7,
+    vx: 0, vy: 0,
+    color: '#ffffff',
+    alive: true, r: CUE_R
+  };
+
+  shotsLeft = ballCount + 2 + Math.floor(n / 3);
+  levelDisplay.textContent = `Level ${level}`;
+  shotsDisplay.textContent = `Shots: ${shotsLeft}`;
+}
+
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      color,
+      life: 1,
+      decay: 0.015 + Math.random() * 0.02,
+      r: Math.random() * 3 + 1
+    });
+  }
+}
+
+function simulateTrajectory(sx, sy, vx, vy, steps) {
+  trajectoryDots = [];
+  let tx = sx, ty = sy, tvx = vx, tvy = vy;
+  for (let i = 0; i < steps; i++) {
+    // Apply gravity
+    for (const w of wells) {
+      const dx = w.x - tx, dy = w.y - ty;
+      const dist = Math.max(Math.hypot(dx, dy), 30);
+      const force = (G_STRENGTH * w.mass) / (dist * dist);
+      const sign = w.repulsor ? -1 : 1;
+      tvx += sign * (dx / dist) * force * 0.016;
+      tvy += sign * (dy / dist) * force * 0.016;
+    }
+    tx += tvx;
+    ty += tvy;
+    tvx *= FRICTION;
+    tvy *= FRICTION;
+    if (i % 3 === 0) {
+      trajectoryDots.push({ x: tx, y: ty, a: 1 - i / steps });
+    }
+  }
+}
+
+// Input handling
+let pointerDown = false;
+canvas.addEventListener('pointerdown', (e) => {
+  if (!gameActive || !cue || !cue.alive) return;
+  if (Math.abs(cue.vx) > MIN_VEL || Math.abs(cue.vy) > MIN_VEL) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  if (Math.hypot(mx - cue.x, my - cue.y) < 60) {
+    aiming = true;
+    aimStart = { x: mx, y: my };
+    aimCurrent = { x: mx, y: my };
+    pointerDown = true;
+  }
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!aiming) return;
+  const rect = canvas.getBoundingClientRect();
+  aimCurrent = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+});
+
+canvas.addEventListener('pointerup', () => {
+  if (!aiming || !cue) { aiming = false; return; }
+  const dx = aimStart.x - aimCurrent.x;
+  const dy = aimStart.y - aimCurrent.y;
+  const power = Math.min(Math.hypot(dx, dy) * 0.08, MAX_POWER);
+  if (power > 0.5) {
+    const angle = Math.atan2(dy, dx);
+    cue.vx = Math.cos(angle) * power;
+    cue.vy = Math.sin(angle) * power;
+    shotsLeft--;
+    shotsDisplay.textContent = `Shots: ${shotsLeft}`;
+  }
+  aiming = false;
+  aimStart = null;
+  aimCurrent = null;
+  trajectoryDots = [];
+  pointerDown = false;
+});
+
+function collide(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const dist = Math.hypot(dx, dy);
+  const minDist = a.r + b.r;
+  if (dist < minDist && dist > 0) {
+    const nx = dx / dist, ny = dy / dist;
+    const relV = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+    if (relV > 0) {
+      a.vx -= relV * nx;
+      a.vy -= relV * ny;
+      b.vx += relV * nx;
+      b.vy += relV * ny;
+    }
+    // Separate
+    const overlap = minDist - dist;
+    a.x -= nx * overlap * 0.5;
+    a.y -= ny * overlap * 0.5;
+    b.x += nx * overlap * 0.5;
+    b.y += ny * overlap * 0.5;
+    spawnParticles((a.x + b.x) / 2, (a.y + b.y) / 2, '#ffffff', 6);
+  }
+}
+
+function update() {
+  if (!gameActive) return;
+
+  const allBodies = [...balls.filter(b => b.alive), cue?.alive ? cue : null].filter(Boolean);
+
+  // Gravity
+  for (const b of allBodies) {
+    for (const w of wells) {
+      const dx = w.x - b.x, dy = w.y - b.y;
+      const dist = Math.max(Math.hypot(dx, dy), 25);
+      const force = (G_STRENGTH * w.mass) / (dist * dist);
+      const sign = w.repulsor ? -1 : 1;
+      b.vx += sign * (dx / dist) * force * 0.016;
+      b.vy += sign * (dy / dist) * force * 0.016;
+
+      // Swallowed by black hole?
+      if (!w.repulsor && dist < w.r * 0.4 && b !== cue) {
+        b.alive = false;
+        spawnParticles(b.x, b.y, b.color, 20);
+        // Penalty — ball lost but no score
+      }
+    }
+  }
+
+  // Move
+  for (const b of allBodies) {
+    b.x += b.vx;
+    b.y += b.vy;
+    b.vx *= FRICTION;
+    b.vy *= FRICTION;
+    if (Math.abs(b.vx) < MIN_VEL * 0.5) b.vx = 0;
+    if (Math.abs(b.vy) < MIN_VEL * 0.5) b.vy = 0;
+
+    // Wall bounce
+    if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx) * 0.8; }
+    if (b.x > W - b.r) { b.x = W - b.r; b.vx = -Math.abs(b.vx) * 0.8; }
+    if (b.y < b.r) { b.y = b.r; b.vy = Math.abs(b.vy) * 0.8; }
+    if (b.y > H - b.r) { b.y = H - b.r; b.vy = -Math.abs(b.vy) * 0.8; }
+  }
+
+  // Ball-ball collisions
+  for (let i = 0; i < allBodies.length; i++) {
+    for (let j = i + 1; j < allBodies.length; j++) {
+      collide(allBodies[i], allBodies[j]);
+    }
+  }
+
+  // Pocket check
+  for (const b of balls) {
+    if (!b.alive) continue;
+    for (const p of pockets) {
+      if (Math.hypot(b.x - p.x, b.y - p.y) < p.r + b.r * 0.3) {
+        b.alive = false;
+        score += 100 * level;
+        scoreDisplay.textContent = score;
+        p.glow = 1;
+        spawnParticles(p.x, p.y, b.color, 30);
+      }
+    }
+  }
+
+  // Cue in pocket — respawn
+  if (cue && cue.alive) {
+    for (const p of pockets) {
+      if (Math.hypot(cue.x - p.x, cue.y - p.y) < p.r + cue.r * 0.3) {
+        cue.x = W / 2;
+        cue.y = H / 2 + Math.min(W, H) * 0.25;
+        cue.vx = 0;
+        cue.vy = 0;
+        spawnParticles(p.x, p.y, '#ffffff', 15);
+      }
+    }
+  }
+
+  // Particles
+  for (const p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.97;
+    p.vy *= 0.97;
+    p.life -= p.decay;
+  }
+  particles = particles.filter(p => p.life > 0);
+
+  // Pocket glow decay
+  for (const p of pockets) {
+    if (p.glow > 0) p.glow *= 0.95;
+  }
+
+  // Well pulse
+  for (const w of wells) {
+    w.pulse += 0.03;
+  }
+
+  // Level complete?
+  const remaining = balls.filter(b => b.alive).length;
+  if (remaining === 0) {
+    score += shotsLeft * 50;
+    scoreDisplay.textContent = score;
+    generateLevel(level + 1);
+    return;
+  }
+
+  // Out of shots?
+  const allStopped = allBodies.every(b => Math.abs(b.vx) < MIN_VEL && Math.abs(b.vy) < MIN_VEL);
+  if (shotsLeft <= 0 && allStopped) {
+    endGame();
+  }
+
+  // Trajectory preview
+  if (aiming && aimCurrent && cue) {
+    const dx = aimStart.x - aimCurrent.x;
+    const dy = aimStart.y - aimCurrent.y;
+    const power = Math.min(Math.hypot(dx, dy) * 0.08, MAX_POWER);
+    const angle = Math.atan2(dy, dx);
+    simulateTrajectory(cue.x, cue.y, Math.cos(angle) * power, Math.sin(angle) * power, 90);
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Stars
+  const t = performance.now() * 0.001;
+  for (const s of stars) {
+    const twinkle = Math.sin(t * s.speed * 10 + s.twinkle) * 0.3 + 0.7;
+    ctx.globalAlpha = s.a * twinkle;
+    ctx.fillStyle = '#c0d0ff';
+    ctx.beginPath();
+    ctx.arc(s.x * W, s.y * H, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Gravity field visualization
+  for (const w of wells) {
+    const rings = 5;
+    for (let i = rings; i > 0; i--) {
+      const r = w.r + i * 25 + Math.sin(w.pulse + i) * 4;
+      ctx.strokeStyle = w.repulsor
+        ? `rgba(255,80,60,${0.06 * i / rings})`
+        : `rgba(120,80,255,${0.08 * i / rings})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // Core
+    const grad = ctx.createRadialGradient(w.x, w.y, 0, w.x, w.y, w.r);
+    if (w.repulsor) {
+      grad.addColorStop(0, 'rgba(255,100,60,0.9)');
+      grad.addColorStop(0.5, 'rgba(255,60,40,0.3)');
+      grad.addColorStop(1, 'rgba(255,40,20,0)');
+    } else {
+      grad.addColorStop(0, 'rgba(100,60,200,0.9)');
+      grad.addColorStop(0.5, 'rgba(80,40,180,0.3)');
+      grad.addColorStop(1, 'rgba(60,20,160,0)');
+    }
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, w.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Label
+    ctx.fillStyle = w.repulsor ? 'rgba(255,120,80,0.5)' : 'rgba(160,128,255,0.5)';
+    ctx.font = '10px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(w.repulsor ? 'REPULSOR' : 'GRAVITY', w.x, w.y + w.r + 16);
+  }
+
+  // Pockets
+  for (const p of pockets) {
+    const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r + 8);
+    const glowA = 0.15 + p.glow * 0.6;
+    grad.addColorStop(0, `rgba(64,208,255,${glowA})`);
+    grad.addColorStop(0.6, `rgba(64,160,255,${glowA * 0.5})`);
+    grad.addColorStop(1, 'rgba(64,120,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r + 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = `rgba(64,200,255,${0.3 + p.glow * 0.5})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Trajectory preview
+  if (aiming && trajectoryDots.length > 0) {
+    for (const d of trajectoryDots) {
+      ctx.globalAlpha = d.a * 0.4;
+      ctx.fillStyle = '#a0c0ff';
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Balls
+  for (const b of balls) {
+    if (!b.alive) continue;
+    // Glow
+    const glow = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * 2.5);
+    glow.addColorStop(0, b.color + '40');
+    glow.addColorStop(1, b.color + '00');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ball
+    const bgrad = ctx.createRadialGradient(b.x - 3, b.y - 3, 1, b.x, b.y, b.r);
+    bgrad.addColorStop(0, '#ffffff');
+    bgrad.addColorStop(0.3, b.color);
+    bgrad.addColorStop(1, b.color + '80');
+    ctx.fillStyle = bgrad;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Cue ball
+  if (cue && cue.alive) {
+    const cGlow = ctx.createRadialGradient(cue.x, cue.y, 0, cue.x, cue.y, cue.r * 2.5);
+    cGlow.addColorStop(0, 'rgba(255,255,255,0.25)');
+    cGlow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = cGlow;
+    ctx.beginPath();
+    ctx.arc(cue.x, cue.y, cue.r * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    const cGrad = ctx.createRadialGradient(cue.x - 3, cue.y - 3, 1, cue.x, cue.y, cue.r);
+    cGrad.addColorStop(0, '#ffffff');
+    cGrad.addColorStop(0.5, '#e0e8ff');
+    cGrad.addColorStop(1, '#a0b0d0');
+    ctx.fillStyle = cGrad;
+    ctx.beginPath();
+    ctx.arc(cue.x, cue.y, cue.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Aiming line
+    if (aiming && aimStart && aimCurrent) {
+      const dx = aimStart.x - aimCurrent.x;
+      const dy = aimStart.y - aimCurrent.y;
+      const power = Math.min(Math.hypot(dx, dy) * 0.08, MAX_POWER);
+      const angle = Math.atan2(dy, dx);
+      const len = power * 5;
+
+      ctx.strokeStyle = `rgba(255,255,255,${0.3 + power / MAX_POWER * 0.5})`;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(cue.x, cue.y);
+      ctx.lineTo(cue.x + Math.cos(angle) * len, cue.y + Math.sin(angle) * len);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Power indicator
+      ctx.fillStyle = power > MAX_POWER * 0.7 ? '#ff6060' : '#a0c0ff';
+      ctx.font = '11px Courier New';
+      ctx.textAlign = 'center';
+      ctx.fillText(Math.round(power / MAX_POWER * 100) + '%', cue.x, cue.y + cue.r + 20);
+    }
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function endGame() {
+  gameActive = false;
+  overlay.querySelector('h1').textContent = '🪐 Game Over';
+  overlay.querySelector('.sub').innerHTML =
+    `<div class="result">Score: ${score}</div>Reached Level ${level}`;
+  startBtn.textContent = 'Play Again';
+  overlay.style.display = 'flex';
+}
+
+function startGame() {
+  score = 0;
+  scoreDisplay.textContent = '0';
+  overlay.style.display = 'none';
+  gameActive = true;
+  generateLevel(1);
+}
+
+startBtn.addEventListener('click', startGame);
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
