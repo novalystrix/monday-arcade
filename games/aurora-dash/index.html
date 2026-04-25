@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Aurora Dash — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #020018;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+a.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #40aa80;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+a.back-link:hover { color: #80ffc0; }
+
+canvas {
+  display: block;
+  touch-action: none;
+}
+
+#ui-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  pointer-events: none;
+}
+
+#ui-overlay.active { pointer-events: all; }
+
+#score-display {
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  font-size: 20px;
+  z-index: 60;
+  text-shadow: 0 0 12px rgba(100, 255, 200, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+#combo-display {
+  position: fixed;
+  top: 44px;
+  right: 20px;
+  font-size: 14px;
+  z-index: 60;
+  color: #ffcc44;
+  text-shadow: 0 0 8px rgba(255, 200, 50, 0.5);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.title-text {
+  font-size: 42px;
+  font-weight: bold;
+  background: linear-gradient(135deg, #00ff88, #00ccff, #ff44cc, #ffaa00);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+  margin-bottom: 12px;
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% { filter: hue-rotate(0deg) brightness(1); }
+  50% { filter: hue-rotate(30deg) brightness(1.2); }
+}
+
+.subtitle {
+  font-size: 14px;
+  color: #88ccaa;
+  margin-bottom: 30px;
+}
+
+.start-btn {
+  padding: 14px 40px;
+  font-size: 18px;
+  font-family: 'Courier New', monospace;
+  background: linear-gradient(135deg, #00cc88, #0088ff);
+  color: #fff;
+  border: none;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: all 0.3s;
+  box-shadow: 0 0 25px rgba(0, 200, 130, 0.4);
+}
+.start-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 40px rgba(0, 200, 130, 0.7);
+}
+
+.game-over-score {
+  font-size: 52px;
+  font-weight: bold;
+  color: #00ffaa;
+  text-shadow: 0 0 30px rgba(0, 255, 160, 0.6);
+  margin: 10px 0;
+}
+
+.best-score {
+  font-size: 16px;
+  color: #88aacc;
+  margin-bottom: 20px;
+}
+
+.instructions {
+  font-size: 12px;
+  color: #668888;
+  margin-top: 16px;
+  text-align: center;
+  line-height: 1.6;
+}
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+<canvas id="game"></canvas>
+<div id="score-display">0</div>
+<div id="combo-display">x1</div>
+
+<div id="ui-overlay" class="active">
+  <div class="title-text">Aurora Dash</div>
+  <div class="subtitle">Ride the northern lights</div>
+  <button class="start-btn" id="start-btn">▶ PLAY</button>
+  <div class="instructions">↑↓ or tap top/bottom to move<br>Collect stardust · Dodge dark rifts · Chain combos</div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score-display');
+const comboEl = document.getElementById('combo-display');
+const overlay = document.getElementById('ui-overlay');
+const startBtn = document.getElementById('start-btn');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- Game State ---
+let running = false;
+let score = 0;
+let best = parseInt(localStorage.getItem('aurora-dash-best') || '0');
+let combo = 0;
+let comboTimer = 0;
+let speed = 3;
+let distance = 0;
+let gameTime = 0;
+let player = { x: 0, y: 0, vy: 0, targetY: 0, radius: 10, trail: [], glow: 1 };
+let stars = [];
+let rifts = [];
+let particles = [];
+let auroraWaves = [];
+let bgStars = [];
+let shakeAmount = 0;
+let flashAlpha = 0;
+
+// --- Colors ---
+const AURORA_COLORS = [
+  [0, 255, 136],
+  [0, 200, 255],
+  [255, 68, 204],
+  [255, 170, 0],
+  [120, 80, 255],
+  [0, 255, 220],
+];
+
+function lerpColor(a, b, t) {
+  return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+}
+
+function auroraColor(t) {
+  t = ((t % 1) + 1) % 1;
+  const idx = t * (AURORA_COLORS.length - 1);
+  const i = Math.floor(idx);
+  const f = idx - i;
+  const a = AURORA_COLORS[i];
+  const b = AURORA_COLORS[Math.min(i + 1, AURORA_COLORS.length - 1)];
+  return lerpColor(a, b, f);
+}
+
+function rgba(c, a) {
+  return `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+}
+
+// --- Background Stars ---
+function initBgStars() {
+  bgStars = [];
+  for (let i = 0; i < 200; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      size: Math.random() * 1.5 + 0.3,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.3 + 0.1,
+    });
+  }
+}
+
+// --- Aurora Waves (background curtains) ---
+function initAuroraWaves() {
+  auroraWaves = [];
+  for (let i = 0; i < 5; i++) {
+    auroraWaves.push({
+      yBase: H * 0.2 + Math.random() * H * 0.5,
+      amplitude: 30 + Math.random() * 60,
+      frequency: 0.003 + Math.random() * 0.005,
+      phase: Math.random() * Math.PI * 2,
+      phaseSpeed: 0.005 + Math.random() * 0.01,
+      colorOffset: Math.random(),
+      alpha: 0.04 + Math.random() * 0.06,
+      height: 60 + Math.random() * 120,
+    });
+  }
+}
+
+function drawAuroraWaves() {
+  for (const w of auroraWaves) {
+    w.phase += w.phaseSpeed;
+    const col = auroraColor((w.colorOffset + gameTime * 0.01) % 1);
+    
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (let x = 0; x <= W; x += 4) {
+      const y = w.yBase + Math.sin(x * w.frequency + w.phase) * w.amplitude
+                + Math.sin(x * w.frequency * 2.3 + w.phase * 1.7) * w.amplitude * 0.3;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, H);
+    ctx.closePath();
+
+    const grad = ctx.createLinearGradient(0, w.yBase - w.height, 0, w.yBase + w.height);
+    grad.addColorStop(0, rgba(col, 0));
+    grad.addColorStop(0.3, rgba(col, w.alpha * 1.5));
+    grad.addColorStop(0.5, rgba(col, w.alpha));
+    grad.addColorStop(1, rgba(col, 0));
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+}
+
+function drawBgStars() {
+  for (const s of bgStars) {
+    s.x -= s.speed * speed * 0.5;
+    s.twinkle += 0.02;
+    if (s.x < -5) { s.x = W + 5; s.y = Math.random() * H; }
+    const a = 0.4 + Math.sin(s.twinkle) * 0.3;
+    ctx.fillStyle = rgba([200, 220, 255], a);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// --- Stardust (collectibles) ---
+function spawnStar() {
+  const col = auroraColor(Math.random());
+  stars.push({
+    x: W + 20,
+    y: 60 + Math.random() * (H - 120),
+    radius: 6 + Math.random() * 4,
+    color: col,
+    pulse: Math.random() * Math.PI * 2,
+    collected: false,
+  });
+}
+
+function drawStars() {
+  for (const s of stars) {
+    if (s.collected) continue;
+    s.x -= speed;
+    s.pulse += 0.08;
+    const r = s.radius + Math.sin(s.pulse) * 2;
+    const glow = 0.3 + Math.sin(s.pulse) * 0.15;
+    
+    // outer glow
+    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 3);
+    g.addColorStop(0, rgba(s.color, glow));
+    g.addColorStop(1, rgba(s.color, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r * 3, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // core
+    ctx.fillStyle = rgba(s.color, 0.9);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // white center
+    ctx.fillStyle = rgba([255,255,255], 0.7);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// --- Dark Rifts (obstacles) ---
+function spawnRift() {
+  const h = 50 + Math.random() * 80;
+  const y = 40 + Math.random() * (H - h - 80);
+  rifts.push({
+    x: W + 30,
+    y: y,
+    w: 18 + Math.random() * 25,
+    h: h,
+    pulse: Math.random() * Math.PI * 2,
+  });
+}
+
+function drawRifts() {
+  for (const r of rifts) {
+    r.x -= speed;
+    r.pulse += 0.06;
+    
+    const wobble = Math.sin(r.pulse) * 3;
+    
+    // dark core
+    const g = ctx.createRadialGradient(
+      r.x + r.w/2, r.y + r.h/2, 0,
+      r.x + r.w/2, r.y + r.h/2, Math.max(r.w, r.h)
+    );
+    g.addColorStop(0, 'rgba(0,0,0,0.95)');
+    g.addColorStop(0.5, 'rgba(20,0,40,0.7)');
+    g.addColorStop(1, 'rgba(40,0,60,0)');
+    
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(r.x + r.w/2 + wobble, r.y + r.h/2, r.w * 0.8, r.h * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // crackling edge
+    const edgeColor = auroraColor((gameTime * 0.02 + r.pulse) % 1);
+    ctx.strokeStyle = rgba(edgeColor, 0.3 + Math.sin(r.pulse * 3) * 0.15);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(r.x + r.w/2 + wobble, r.y + r.h/2, r.w * 0.85, r.h * 0.55, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+// --- Particles ---
+function spawnParticles(x, y, color, count, spread) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd = Math.random() * spread + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * spd,
+      vy: Math.sin(angle) * spd,
+      life: 1,
+      decay: 0.01 + Math.random() * 0.025,
+      size: 1 + Math.random() * 3,
+      color: color,
+    });
+  }
+}
+
+function drawParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.98;
+    p.vy *= 0.98;
+    p.life -= p.decay;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = rgba(p.color, 1);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // glow
+    ctx.fillStyle = rgba(p.color, 0.3);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// --- Player ---
+function drawPlayer() {
+  const px = player.x;
+  const py = player.y;
+  const colorT = (gameTime * 0.015) % 1;
+  const col = auroraColor(colorT);
+  
+  // Trail
+  player.trail.push({ x: px, y: py, t: colorT, life: 1 });
+  if (player.trail.length > 60) player.trail.shift();
+  
+  for (let i = 0; i < player.trail.length; i++) {
+    const t = player.trail[i];
+    const a = (i / player.trail.length) * 0.6 * t.life;
+    const tc = auroraColor(t.t);
+    const sz = (i / player.trail.length) * player.radius * 1.2;
+    
+    ctx.fillStyle = rgba(tc, a * 0.3);
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, sz * 2, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.fillStyle = rgba(tc, a);
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, sz, 0, Math.PI * 2);
+    ctx.fill();
+    
+    t.life -= 0.008;
+  }
+  
+  // Spirit glow layers
+  for (let layer = 3; layer >= 0; layer--) {
+    const r = player.radius * (1 + layer * 0.8);
+    const a = layer === 0 ? 0.9 : (0.15 / (layer * 0.8));
+    const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+    g.addColorStop(0, rgba(layer === 0 ? [255,255,255] : col, a));
+    g.addColorStop(1, rgba(col, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Tiny sparkles around player
+  if (Math.random() < 0.4) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = player.radius * 2 + Math.random() * 8;
+    spawnParticles(
+      px + Math.cos(angle) * dist,
+      py + Math.sin(angle) * dist,
+      auroraColor(Math.random()), 1, 0.5
+    );
+  }
+}
+
+// --- Input ---
+let moveUp = false;
+let moveDown = false;
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowUp' || e.key === 'w') moveUp = true;
+  if (e.key === 'ArrowDown' || e.key === 's') moveDown = true;
+  if (e.key === ' ' && !running) startGame();
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'ArrowUp' || e.key === 'w') moveUp = false;
+  if (e.key === 'ArrowDown' || e.key === 's') moveDown = false;
+});
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const touch = e.touches[0];
+  if (touch.clientY < H / 2) moveUp = true;
+  else moveDown = true;
+});
+canvas.addEventListener('touchend', e => {
+  moveUp = false;
+  moveDown = false;
+});
+
+startBtn.addEventListener('click', startGame);
+
+// --- Game Logic ---
+function startGame() {
+  score = 0;
+  combo = 0;
+  comboTimer = 0;
+  speed = 3;
+  distance = 0;
+  gameTime = 0;
+  shakeAmount = 0;
+  flashAlpha = 0;
+  player.x = W * 0.2;
+  player.y = H / 2;
+  player.vy = 0;
+  player.trail = [];
+  player.glow = 1;
+  stars = [];
+  rifts = [];
+  particles = [];
+  running = true;
+  
+  overlay.classList.remove('active');
+  overlay.innerHTML = '';
+  scoreEl.style.display = 'block';
+  comboEl.style.display = 'block';
+  
+  initBgStars();
+  initAuroraWaves();
+}
+
+function endGame() {
+  running = false;
+  if (score > best) {
+    best = score;
+    localStorage.setItem('aurora-dash-best', best);
+  }
+  
+  flashAlpha = 0.8;
+  shakeAmount = 12;
+  
+  // Explosion
+  const col = auroraColor(Math.random());
+  spawnParticles(player.x, player.y, col, 50, 6);
+  spawnParticles(player.x, player.y, [255,255,255], 20, 4);
+  
+  setTimeout(() => {
+    overlay.innerHTML = `
+      <div class="title-text" style="font-size:28px;">Lights Out</div>
+      <div class="game-over-score">${score}</div>
+      <div class="best-score">Best: ${best}</div>
+      <button class="start-btn" onclick="startGame()">↻ Again</button>
+    `;
+    overlay.classList.add('active');
+  }, 800);
+}
+
+let spawnStarTimer = 0;
+let spawnRiftTimer = 0;
+
+function update() {
+  if (!running) return;
+  
+  gameTime++;
+  distance++;
+  
+  // Speed ramp
+  speed = 3 + distance * 0.0008;
+  if (speed > 10) speed = 10;
+  
+  // Player movement
+  const accel = 0.6;
+  if (moveUp) player.vy -= accel;
+  if (moveDown) player.vy += accel;
+  if (!moveUp && !moveDown) player.vy *= 0.92;
+  player.vy = Math.max(-8, Math.min(8, player.vy));
+  player.y += player.vy;
+  player.y = Math.max(player.radius + 20, Math.min(H - player.radius - 20, player.y));
+  
+  // Spawn stardust
+  spawnStarTimer++;
+  if (spawnStarTimer > (40 - speed * 2)) {
+    spawnStar();
+    spawnStarTimer = 0;
+  }
+  
+  // Spawn rifts
+  spawnRiftTimer++;
+  const riftInterval = Math.max(50, 120 - distance * 0.02);
+  if (spawnRiftTimer > riftInterval) {
+    spawnRift();
+    spawnRiftTimer = 0;
+  }
+  
+  // Combo decay
+  if (combo > 0) {
+    comboTimer++;
+    if (comboTimer > 120) {
+      combo = 0;
+      comboTimer = 0;
+    }
+  }
+  
+  // Collisions — stars
+  for (const s of stars) {
+    if (s.collected) continue;
+    const dx = player.x - s.x;
+    const dy = player.y - s.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < player.radius + s.radius + 5) {
+      s.collected = true;
+      combo++;
+      comboTimer = 0;
+      const points = 10 * Math.max(1, combo);
+      score += points;
+      spawnParticles(s.x, s.y, s.color, 12, 3);
+      player.glow = 2;
+    }
+  }
+  
+  // Collisions — rifts
+  for (const r of rifts) {
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    const dx = Math.abs(player.x - cx);
+    const dy = Math.abs(player.y - cy);
+    if (dx < r.w * 0.6 + player.radius * 0.5 && dy < r.h * 0.4 + player.radius * 0.5) {
+      endGame();
+      return;
+    }
+  }
+  
+  // Cleanup offscreen
+  stars = stars.filter(s => s.x > -50);
+  rifts = rifts.filter(r => r.x > -60);
+  
+  // Player glow decay
+  player.glow += (1 - player.glow) * 0.05;
+  
+  // Shake decay
+  shakeAmount *= 0.9;
+  flashAlpha *= 0.92;
+  
+  // Update UI
+  scoreEl.textContent = score;
+  if (combo > 1) {
+    comboEl.textContent = `x${combo}`;
+    comboEl.style.opacity = '1';
+    comboEl.style.fontSize = Math.min(14 + combo * 2, 32) + 'px';
+  } else {
+    comboEl.style.opacity = '0';
+  }
+}
+
+function draw() {
+  // Clear
+  ctx.fillStyle = '#020018';
+  ctx.fillRect(0, 0, W, H);
+  
+  // Screen shake
+  if (shakeAmount > 0.5) {
+    ctx.save();
+    ctx.translate(
+      (Math.random() - 0.5) * shakeAmount,
+      (Math.random() - 0.5) * shakeAmount
+    );
+  }
+  
+  // Background layers
+  drawBgStars();
+  drawAuroraWaves();
+  
+  // Game objects
+  drawRifts();
+  drawStars();
+  if (running) drawPlayer();
+  drawParticles();
+  
+  // Flash effect
+  if (flashAlpha > 0.01) {
+    ctx.fillStyle = rgba([255, 100, 150], flashAlpha);
+    ctx.fillRect(0, 0, W, H);
+  }
+  
+  if (shakeAmount > 0.5) ctx.restore();
+  
+  // Vignette
+  const vg = ctx.createRadialGradient(W/2, H/2, W * 0.3, W/2, H/2, W * 0.8);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,20,0.5)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Init
+initBgStars();
+initAuroraWaves();
+loop();
+</script>
+</body>
+</html>
