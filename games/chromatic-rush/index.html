@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Chromatic Rush — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #050510;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+canvas { display: block; }
+#hud {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  text-align: right;
+  z-index: 100;
+  font-size: 14px;
+  line-height: 1.6;
+  text-shadow: 0 0 8px rgba(150,100,255,0.5);
+  pointer-events: none;
+}
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  background: rgba(5,5,16,0.85);
+  text-align: center;
+  gap: 16px;
+  transition: opacity 0.3s;
+}
+#overlay.hidden { opacity: 0; pointer-events: none; }
+#overlay h1 {
+  font-size: clamp(28px, 6vw, 52px);
+  background: linear-gradient(90deg, #ff3a6c, #ffd700, #00e5ff, #a855f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+  letter-spacing: 2px;
+}
+#overlay .sub {
+  font-size: 15px;
+  color: #aaa;
+  max-width: 320px;
+  line-height: 1.5;
+}
+#overlay .keys {
+  font-size: 13px;
+  color: #666;
+  margin-top: 8px;
+  line-height: 1.8;
+}
+#overlay .keys kbd {
+  display: inline-block;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: inherit;
+  color: #ccc;
+}
+#overlay .score-display {
+  font-size: 28px;
+  color: #ffd700;
+  text-shadow: 0 0 20px rgba(255,215,0,0.5);
+}
+.btn {
+  background: linear-gradient(135deg, #a855f7, #6040cc);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 32px;
+  font-size: 16px;
+  font-family: inherit;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.btn:hover { transform: scale(1.05); box-shadow: 0 0 24px rgba(168,85,247,0.5); }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+<div id="hud">
+  <div id="scoreDisplay">0</div>
+  <div id="comboDisplay" style="font-size:12px;color:#ffd700;opacity:0">x1</div>
+  <div id="speedDisplay" style="font-size:11px;color:#666;margin-top:4px"></div>
+</div>
+<div id="overlay">
+  <h1>CHROMATIC RUSH</h1>
+  <div class="sub">Switch your color to match each gate. Miss one and it's over. How long can you last?</div>
+  <div class="keys">
+    <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> to switch color<br>
+    or <kbd>←</kbd> <kbd>↓</kbd> <kbd>→</kbd> / tap left · center · right
+  </div>
+  <button class="btn" id="startBtn">RUSH</button>
+</div>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const scoreEl = document.getElementById('scoreDisplay');
+const comboEl = document.getElementById('comboDisplay');
+const speedEl = document.getElementById('speedDisplay');
+const startBtn = document.getElementById('startBtn');
+
+// Colors
+const COLORS = [
+  { name: 'Ruby',    hex: '#ff3a6c', r: 255, g: 58, b: 108 },
+  { name: 'Gold',    hex: '#ffd700', r: 255, g: 215, b: 0 },
+  { name: 'Cyan',    hex: '#00e5ff', r: 0,   g: 229, b: 255 },
+];
+const BG = '#050510';
+
+let W, H, dpr;
+let running = false;
+let score = 0;
+let combo = 0;
+let maxCombo = 0;
+let bestScore = parseInt(localStorage.getItem('chromaticRushBest') || '0');
+let playerColorIdx = 0;
+let gates = [];
+let particles = [];
+let trails = [];
+let bgStars = [];
+let shakeAmount = 0;
+let speed = 3;
+let baseSpeed = 3;
+let spawnTimer = 0;
+let spawnInterval = 90;
+let flashAlpha = 0;
+let flashColor = '#fff';
+let pulsePhase = 0;
+let gameTime = 0;
+let lastTime = 0;
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  initStars();
+}
+
+function initStars() {
+  bgStars = [];
+  for (let i = 0; i < 80; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      size: Math.random() * 1.5 + 0.3,
+      speed: Math.random() * 0.5 + 0.1,
+      alpha: Math.random() * 0.5 + 0.2,
+    });
+  }
+}
+
+// Player
+const PLAYER_SIZE = 18;
+const PLAYER_Y_RATIO = 0.78;
+
+function playerY() { return H * PLAYER_Y_RATIO; }
+function playerX() { return W / 2; }
+
+// Gate
+function spawnGate() {
+  const colorIdx = Math.floor(Math.random() * 3);
+  const gapWidth = Math.max(100, 160 - gameTime * 0.3);
+  const gapCenter = W * 0.2 + Math.random() * W * 0.6;
+  gates.push({
+    y: -30,
+    colorIdx,
+    gapCenter,
+    gapWidth,
+    passed: false,
+    alpha: 1,
+  });
+}
+
+// Particles
+function spawnParticles(x, y, color, count, spread) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const vel = Math.random() * spread + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * vel,
+      vy: Math.sin(angle) * vel - 1,
+      life: 1,
+      decay: Math.random() * 0.03 + 0.015,
+      size: Math.random() * 4 + 2,
+      color,
+    });
+  }
+}
+
+function spawnTrail() {
+  const c = COLORS[playerColorIdx];
+  trails.push({
+    x: playerX(),
+    y: playerY(),
+    life: 1,
+    decay: 0.04,
+    size: PLAYER_SIZE * 0.7,
+    color: c.hex,
+  });
+}
+
+function switchColor(idx) {
+  if (idx === playerColorIdx) return;
+  playerColorIdx = idx;
+  const c = COLORS[idx];
+  spawnParticles(playerX(), playerY(), c.hex, 12, 3);
+  flashAlpha = 0.15;
+  flashColor = c.hex;
+}
+
+// Input
+function handleKey(e) {
+  if (!running) return;
+  if (e.key === '1' || e.key === 'ArrowLeft')  { switchColor(0); e.preventDefault(); }
+  if (e.key === '2' || e.key === 'ArrowDown')   { switchColor(1); e.preventDefault(); }
+  if (e.key === '3' || e.key === 'ArrowRight')  { switchColor(2); e.preventDefault(); }
+}
+
+function handleTouch(e) {
+  if (!running) return;
+  const t = e.touches ? e.touches[0] : e;
+  const x = t.clientX;
+  if (x < W / 3) switchColor(0);
+  else if (x < W * 2 / 3) switchColor(1);
+  else switchColor(2);
+}
+
+window.addEventListener('keydown', handleKey);
+canvas.addEventListener('touchstart', handleTouch, { passive: true });
+canvas.addEventListener('mousedown', handleTouch);
+window.addEventListener('resize', resize);
+
+// Drawing
+function drawStars() {
+  for (const s of bgStars) {
+    s.y += s.speed * speed * 0.5;
+    if (s.y > H) { s.y = 0; s.x = Math.random() * W; }
+    ctx.globalAlpha = s.alpha;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(s.x, s.y, s.size, s.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawPlayer() {
+  const px = playerX();
+  const py = playerY();
+  const c = COLORS[playerColorIdx];
+
+  // Glow
+  const grad = ctx.createRadialGradient(px, py, 0, px, py, PLAYER_SIZE * 3);
+  grad.addColorStop(0, c.hex + '30');
+  grad.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad;
+  ctx.fillRect(px - PLAYER_SIZE * 3, py - PLAYER_SIZE * 3, PLAYER_SIZE * 6, PLAYER_SIZE * 6);
+
+  // Diamond shape
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(Math.PI / 4 + Math.sin(pulsePhase * 3) * 0.05);
+  const s = PLAYER_SIZE * (1 + Math.sin(pulsePhase * 5) * 0.05);
+  ctx.shadowColor = c.hex;
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = c.hex;
+  ctx.fillRect(-s / 2, -s / 2, s, s);
+  ctx.shadowBlur = 0;
+
+  // Inner highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.fillRect(-s / 4, -s / 4, s / 2, s / 2);
+  ctx.restore();
+}
+
+function drawGates() {
+  for (const g of gates) {
+    const c = COLORS[g.colorIdx];
+    const leftEnd = g.gapCenter - g.gapWidth / 2;
+    const rightStart = g.gapCenter + g.gapWidth / 2;
+
+    ctx.globalAlpha = g.alpha;
+
+    // Left bar
+    if (leftEnd > 0) {
+      const grad = ctx.createLinearGradient(0, g.y, leftEnd, g.y);
+      grad.addColorStop(0, c.hex + '20');
+      grad.addColorStop(1, c.hex);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, g.y - 3, leftEnd, 6);
+
+      // Glow
+      ctx.shadowColor = c.hex;
+      ctx.shadowBlur = 15;
+      ctx.fillStyle = c.hex;
+      ctx.fillRect(0, g.y - 1, leftEnd, 2);
+      ctx.shadowBlur = 0;
+    }
+
+    // Right bar
+    if (rightStart < W) {
+      const grad = ctx.createLinearGradient(rightStart, g.y, W, g.y);
+      grad.addColorStop(0, c.hex);
+      grad.addColorStop(1, c.hex + '20');
+      ctx.fillStyle = grad;
+      ctx.fillRect(rightStart, g.y - 3, W - rightStart, 6);
+
+      ctx.shadowColor = c.hex;
+      ctx.shadowBlur = 15;
+      ctx.fillStyle = c.hex;
+      ctx.fillRect(rightStart, g.y - 1, W - rightStart, 2);
+      ctx.shadowBlur = 0;
+    }
+
+    // Gate edge markers
+    ctx.fillStyle = c.hex;
+    ctx.shadowColor = c.hex;
+    ctx.shadowBlur = 12;
+    // Left edge
+    ctx.beginPath();
+    ctx.arc(leftEnd, g.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    // Right edge
+    ctx.beginPath();
+    ctx.arc(rightStart, g.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Color label
+    ctx.font = '10px Courier New';
+    ctx.fillStyle = c.hex;
+    ctx.textAlign = 'center';
+    ctx.fillText(c.name.toUpperCase(), g.gapCenter, g.y - 12);
+
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
+function drawTrails() {
+  for (const t of trails) {
+    ctx.globalAlpha = t.life * 0.3;
+    ctx.fillStyle = t.color;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.size * t.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawColorIndicator() {
+  const y = H - 40;
+  const totalW = 180;
+  const startX = (W - totalW) / 2;
+  for (let i = 0; i < 3; i++) {
+    const c = COLORS[i];
+    const cx = startX + i * 60 + 30;
+    const isActive = i === playerColorIdx;
+    ctx.globalAlpha = isActive ? 1 : 0.3;
+    ctx.fillStyle = c.hex;
+    ctx.shadowColor = isActive ? c.hex : 'transparent';
+    ctx.shadowBlur = isActive ? 15 : 0;
+    ctx.beginPath();
+    ctx.arc(cx, y, isActive ? 10 : 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // Key hint
+    ctx.font = '10px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = isActive ? '#fff' : '#555';
+    ctx.fillText(String(i + 1), cx, y + 22);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawFlash() {
+  if (flashAlpha > 0) {
+    ctx.globalAlpha = flashAlpha;
+    ctx.fillStyle = flashColor;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// Combo display
+function updateComboUI() {
+  if (combo > 1) {
+    comboEl.style.opacity = '1';
+    comboEl.textContent = `x${combo}`;
+    comboEl.style.transform = `scale(${1 + combo * 0.05})`;
+    comboEl.style.color = combo >= 10 ? '#ff3a6c' : combo >= 5 ? '#00e5ff' : '#ffd700';
+  } else {
+    comboEl.style.opacity = '0';
+  }
+}
+
+// Game logic
+function update(dt) {
+  gameTime += dt;
+  pulsePhase += dt;
+
+  // Increase speed over time
+  speed = baseSpeed + gameTime * 0.08;
+  spawnInterval = Math.max(35, 90 - gameTime * 0.8);
+
+  speedEl.textContent = `${speed.toFixed(1)}x`;
+
+  // Spawn gates
+  spawnTimer += 1;
+  if (spawnTimer >= spawnInterval) {
+    spawnTimer = 0;
+    spawnGate();
+  }
+
+  // Trail
+  if (Math.random() < 0.6) spawnTrail();
+
+  // Update gates
+  for (let i = gates.length - 1; i >= 0; i--) {
+    const g = gates[i];
+    g.y += speed;
+
+    // Check if gate reached player
+    if (!g.passed && g.y >= playerY() - 10 && g.y <= playerY() + 10) {
+      g.passed = true;
+      const px = playerX();
+      const inGap = px > g.gapCenter - g.gapWidth / 2 && px < g.gapCenter + g.gapWidth / 2;
+
+      if (g.colorIdx === playerColorIdx && inGap) {
+        // Success!
+        combo++;
+        if (combo > maxCombo) maxCombo = combo;
+        const points = combo;
+        score += points;
+        scoreEl.textContent = score;
+        updateComboUI();
+        spawnParticles(px, playerY(), COLORS[g.colorIdx].hex, 20, 5);
+        flashAlpha = 0.08;
+        flashColor = COLORS[g.colorIdx].hex;
+      } else {
+        // Fail!
+        gameOver();
+        return;
+      }
+    }
+
+    // Remove off-screen
+    if (g.y > H + 50) gates.splice(i, 1);
+  }
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= p.decay;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Update trails
+  for (let i = trails.length - 1; i >= 0; i--) {
+    const t = trails[i];
+    t.y += speed * 0.3;
+    t.life -= t.decay;
+    if (t.life <= 0) trails.splice(i, 1);
+  }
+
+  // Flash decay
+  if (flashAlpha > 0) flashAlpha *= 0.9;
+  if (flashAlpha < 0.005) flashAlpha = 0;
+
+  // Shake decay
+  if (shakeAmount > 0) shakeAmount *= 0.85;
+  if (shakeAmount < 0.3) shakeAmount = 0;
+}
+
+function draw() {
+  ctx.save();
+  if (shakeAmount > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * shakeAmount * 2,
+      (Math.random() - 0.5) * shakeAmount * 2
+    );
+  }
+
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle vignette
+  const vig = ctx.createRadialGradient(W/2, H/2, H*0.3, W/2, H/2, H*0.8);
+  vig.addColorStop(0, 'transparent');
+  vig.addColorStop(1, 'rgba(0,0,0,0.4)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, W, H);
+
+  drawStars();
+  drawTrails();
+  drawGates();
+  drawPlayer();
+  drawParticles();
+  drawColorIndicator();
+  drawFlash();
+
+  ctx.restore();
+}
+
+function gameLoop(ts) {
+  if (!running) return;
+  const dt = lastTime ? Math.min((ts - lastTime) / 1000, 0.05) : 0.016;
+  lastTime = ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+  score = 0;
+  combo = 0;
+  maxCombo = 0;
+  playerColorIdx = 0;
+  gates = [];
+  particles = [];
+  trails = [];
+  speed = baseSpeed;
+  spawnTimer = 0;
+  gameTime = 0;
+  lastTime = 0;
+  flashAlpha = 0;
+  shakeAmount = 0;
+  scoreEl.textContent = '0';
+  comboEl.style.opacity = '0';
+  overlay.classList.add('hidden');
+  running = true;
+  requestAnimationFrame(gameLoop);
+}
+
+function gameOver() {
+  running = false;
+  shakeAmount = 20;
+
+  // Death explosion
+  spawnParticles(playerX(), playerY(), '#ff3a6c', 40, 8);
+  spawnParticles(playerX(), playerY(), '#ffd700', 30, 6);
+  spawnParticles(playerX(), playerY(), '#00e5ff', 30, 6);
+
+  flashAlpha = 0.4;
+  flashColor = '#ff3a6c';
+
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('chromaticRushBest', String(bestScore));
+  }
+
+  // Draw one more frame with shake
+  let frames = 0;
+  function deathAnim(ts) {
+    const dt = 0.016;
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life -= p.decay;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+    if (flashAlpha > 0) flashAlpha *= 0.92;
+    if (shakeAmount > 0) shakeAmount *= 0.85;
+    draw();
+    frames++;
+    if (frames < 60) requestAnimationFrame(deathAnim);
+    else showGameOver();
+  }
+  requestAnimationFrame(deathAnim);
+}
+
+function showGameOver() {
+  overlay.classList.remove('hidden');
+  overlay.innerHTML = `
+    <h1>GAME OVER</h1>
+    <div class="score-display">${score}</div>
+    <div class="sub">
+      Best combo: x${maxCombo}<br>
+      High score: ${bestScore}
+    </div>
+    <button class="btn" onclick="startGame()">AGAIN</button>
+    <div class="keys" style="margin-top:4px">
+      <kbd>Space</kbd> or <kbd>Enter</kbd> to restart
+    </div>
+  `;
+}
+
+// Space/Enter to start/restart
+window.addEventListener('keydown', (e) => {
+  if ((e.key === ' ' || e.key === 'Enter') && !running) {
+    e.preventDefault();
+    startGame();
+  }
+});
+
+startBtn.addEventListener('click', startGame);
+resize();
+
+// Draw idle background
+function idleDraw() {
+  if (running) return;
+  pulsePhase += 0.016;
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+  drawStars();
+  for (const s of bgStars) s.y += s.speed * 0.5;
+  for (const s of bgStars) if (s.y > H) { s.y = 0; s.x = Math.random() * W; }
+  requestAnimationFrame(idleDraw);
+}
+idleDraw();
+</script>
+</body>
+</html>
