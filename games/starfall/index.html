@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Starfall — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #050510;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #7B68EE;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+
+canvas {
+  display: block;
+  cursor: crosshair;
+}
+
+#ui-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 20px;
+  z-index: 50;
+  pointer-events: none;
+}
+
+#score-display {
+  font-size: 22px;
+  font-weight: bold;
+  color: #FFD700;
+  text-shadow: 0 0 12px rgba(255,215,0,0.6);
+}
+
+#combo-display {
+  font-size: 18px;
+  color: #FF6EC7;
+  text-shadow: 0 0 10px rgba(255,110,199,0.5);
+  transition: transform 0.15s;
+}
+
+#lives-display {
+  font-size: 18px;
+  color: #FF4444;
+  text-shadow: 0 0 8px rgba(255,68,68,0.4);
+}
+
+#game-over-screen, #start-screen {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5,5,16,0.92);
+  z-index: 200;
+  opacity: 1;
+  transition: opacity 0.5s;
+}
+
+#game-over-screen.hidden, #start-screen.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.screen-title {
+  font-size: 42px;
+  font-weight: bold;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, #FFD700, #FF6EC7, #7B68EE);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.screen-sub {
+  font-size: 16px;
+  color: #aaa;
+  margin-bottom: 30px;
+}
+
+.screen-score {
+  font-size: 28px;
+  color: #FFD700;
+  margin-bottom: 8px;
+}
+
+.screen-stats {
+  font-size: 14px;
+  color: #888;
+  margin-bottom: 24px;
+}
+
+.play-btn {
+  padding: 14px 40px;
+  font-size: 18px;
+  font-family: 'Courier New', monospace;
+  background: linear-gradient(135deg, #7B68EE, #FF6EC7);
+  color: #fff;
+  border: none;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 0 20px rgba(123,104,238,0.4);
+}
+.play-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 30px rgba(123,104,238,0.6);
+}
+
+.constellation-count {
+  font-size: 15px;
+  color: #7B68EE;
+  margin-bottom: 20px;
+}
+</style>
+</head>
+<body>
+
+<a href="/" class="back-link">← Arcade</a>
+
+<div id="ui-overlay">
+  <div id="score-display">0</div>
+  <div id="combo-display"></div>
+  <div id="lives-display">♥♥♥♥♥</div>
+</div>
+
+<div id="start-screen">
+  <div class="screen-title">🌠 Starfall</div>
+  <div class="screen-sub">Catch falling stars. Weave constellations.<br>Chain combos for maximum sparkle.</div>
+  <button class="play-btn" id="start-btn">Play</button>
+</div>
+
+<div id="game-over-screen" class="hidden">
+  <div class="screen-title">Night Fades</div>
+  <div class="screen-score" id="final-score">0</div>
+  <div class="constellation-count" id="final-constellations"></div>
+  <div class="screen-stats" id="final-stats"></div>
+  <button class="play-btn" id="restart-btn">Play Again</button>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score-display');
+const comboEl = document.getElementById('combo-display');
+const livesEl = document.getElementById('lives-display');
+const startScreen = document.getElementById('start-screen');
+const gameOverScreen = document.getElementById('game-over-screen');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- Colors ---
+const STAR_COLORS = [
+  '#FFD700', '#FF6EC7', '#7B68EE', '#00CED1', '#FF6347',
+  '#ADFF2F', '#FF69B4', '#40E0D0', '#FFA500', '#DA70D6'
+];
+
+// --- State ---
+let stars = [];
+let particles = [];
+let constellationLines = [];
+let bgStars = [];
+let caughtPositions = [];
+let score = 0;
+let combo = 0;
+let maxCombo = 0;
+let lives = 5;
+let totalCaught = 0;
+let totalMissed = 0;
+let constellationsFormed = 0;
+let gameRunning = false;
+let spawnTimer = 0;
+let difficulty = 1;
+let shakeAmount = 0;
+let pulseAlpha = 0;
+
+// --- Background Stars ---
+function initBgStars() {
+  bgStars = [];
+  for (let i = 0; i < 200; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.5 + 0.3,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.02 + 0.005
+    });
+  }
+}
+initBgStars();
+
+// --- Star Class ---
+function createStar() {
+  const colorIdx = Math.floor(Math.random() * STAR_COLORS.length);
+  const size = Math.random() * 12 + 10;
+  const speed = (Math.random() * 1.5 + 0.8) * (1 + difficulty * 0.12);
+  const x = Math.random() * (W - 80) + 40;
+
+  // Special stars
+  const roll = Math.random();
+  let type = 'normal';
+  let points = 10;
+  if (roll < 0.08 && difficulty > 2) {
+    type = 'golden';
+    points = 50;
+  } else if (roll < 0.15 && difficulty > 1.5) {
+    type = 'shooting';
+    points = 25;
+  }
+
+  return {
+    x, y: -size,
+    size,
+    speed,
+    color: STAR_COLORS[colorIdx],
+    colorIdx,
+    rotation: Math.random() * Math.PI * 2,
+    rotSpeed: (Math.random() - 0.5) * 0.04,
+    wobble: Math.random() * Math.PI * 2,
+    wobbleSpeed: Math.random() * 0.03 + 0.01,
+    wobbleAmp: Math.random() * 30 + 10,
+    type,
+    points,
+    alpha: 1,
+    trail: [],
+    pulse: 0
+  };
+}
+
+// --- Particles ---
+function spawnParticles(x, y, color, count, burst) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i + Math.random() * 0.3;
+    const speed = burst ? (Math.random() * 6 + 3) : (Math.random() * 3 + 1);
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - (burst ? 2 : 0),
+      life: 1,
+      decay: Math.random() * 0.02 + 0.01,
+      color,
+      size: Math.random() * 4 + 1.5,
+      type: burst ? 'burst' : 'trail'
+    });
+  }
+}
+
+function spawnConstellationBurst(x1, y1, x2, y2, color) {
+  const steps = 8;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const px = x1 + (x2 - x1) * t;
+    const py = y1 + (y2 - y1) * t;
+    spawnParticles(px, py, color, 3, false);
+  }
+}
+
+// --- Constellation Logic ---
+function checkConstellation() {
+  if (caughtPositions.length < 3) return;
+  const last3 = caughtPositions.slice(-3);
+
+  // Form a constellation line between recent catches
+  for (let i = 0; i < last3.length - 1; i++) {
+    constellationLines.push({
+      x1: last3[i].x, y1: last3[i].y,
+      x2: last3[i+1].x, y2: last3[i+1].y,
+      color: last3[i].color,
+      alpha: 1,
+      decay: 0.003
+    });
+    spawnConstellationBurst(last3[i].x, last3[i].y, last3[i+1].x, last3[i+1].y, last3[i].color);
+  }
+
+  // Close the triangle
+  constellationLines.push({
+    x1: last3[0].x, y1: last3[0].y,
+    x2: last3[2].x, y2: last3[2].y,
+    color: last3[2].color,
+    alpha: 1,
+    decay: 0.003
+  });
+  spawnConstellationBurst(last3[0].x, last3[0].y, last3[2].x, last3[2].y, last3[2].color);
+
+  constellationsFormed++;
+  score += 100 * combo;
+  pulseAlpha = 0.3;
+}
+
+// --- Drawing ---
+function drawStar(s) {
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(s.rotation);
+  ctx.globalAlpha = s.alpha;
+
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, s.size * 2);
+  glow.addColorStop(0, s.color + '40');
+  glow.addColorStop(1, 'transparent');
+  ctx.fillStyle = glow;
+  ctx.fillRect(-s.size * 2, -s.size * 2, s.size * 4, s.size * 4);
+
+  // Star shape
+  const spikes = s.type === 'golden' ? 6 : (s.type === 'shooting' ? 4 : 5);
+  const outerR = s.size;
+  const innerR = s.size * 0.45;
+
+  ctx.beginPath();
+  for (let i = 0; i < spikes * 2; i++) {
+    const r = i % 2 === 0 ? outerR : innerR;
+    const a = (Math.PI / spikes) * i - Math.PI / 2;
+    if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  ctx.closePath();
+
+  if (s.type === 'golden') {
+    const grad = ctx.createLinearGradient(-s.size, -s.size, s.size, s.size);
+    grad.addColorStop(0, '#FFD700');
+    grad.addColorStop(0.5, '#FFF8DC');
+    grad.addColorStop(1, '#FFD700');
+    ctx.fillStyle = grad;
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 25;
+  } else if (s.type === 'shooting') {
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = s.color;
+    ctx.shadowBlur = 20;
+  } else {
+    ctx.fillStyle = s.color;
+    ctx.shadowColor = s.color;
+    ctx.shadowBlur = 15;
+  }
+  ctx.fill();
+
+  // Inner glow
+  ctx.beginPath();
+  ctx.arc(0, 0, s.size * 0.3, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffffff80';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawBgStars(time) {
+  ctx.save();
+  for (const s of bgStars) {
+    s.twinkle += s.speed;
+    const alpha = 0.3 + Math.sin(s.twinkle) * 0.3;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawConstellations() {
+  for (const line of constellationLines) {
+    ctx.save();
+    ctx.globalAlpha = line.alpha * 0.6;
+    ctx.strokeStyle = line.color;
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = line.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(line.x1, line.y1);
+    ctx.lineTo(line.x2, line.y2);
+    ctx.stroke();
+
+    // Dots at endpoints
+    ctx.fillStyle = line.color;
+    ctx.globalAlpha = line.alpha * 0.8;
+    ctx.beginPath();
+    ctx.arc(line.x1, line.y1, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(line.x2, line.y2, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.save();
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = p.type === 'burst' ? 12 : 6;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// --- Catch star ---
+function tryCatch(mx, my) {
+  if (!gameRunning) return;
+
+  for (let i = stars.length - 1; i >= 0; i--) {
+    const s = stars[i];
+    const dx = mx - s.x;
+    const dy = my - s.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < s.size + 25) {
+      // Caught!
+      combo++;
+      if (combo > maxCombo) maxCombo = combo;
+      totalCaught++;
+
+      const comboMult = Math.min(combo, 10);
+      const pts = s.points * comboMult;
+      score += pts;
+
+      // Effects
+      spawnParticles(s.x, s.y, s.color, 20, true);
+
+      // Track for constellations
+      caughtPositions.push({ x: s.x, y: s.y, color: s.color });
+      if (caughtPositions.length > 20) caughtPositions.shift();
+
+      // Check constellation every 3 catches
+      if (totalCaught % 3 === 0) {
+        checkConstellation();
+      }
+
+      stars.splice(i, 1);
+
+      // Update UI
+      updateUI();
+      return;
+    }
+  }
+
+  // Missed click — break combo
+  if (combo > 0) {
+    combo = Math.max(0, combo - 1);
+    updateUI();
+  }
+}
+
+// --- Miss star (fell off screen) ---
+function missStar() {
+  lives--;
+  combo = 0;
+  totalMissed++;
+  shakeAmount = 8;
+  updateUI();
+
+  if (lives <= 0) {
+    endGame();
+  }
+}
+
+function updateUI() {
+  scoreEl.textContent = score.toLocaleString();
+
+  if (combo > 1) {
+    comboEl.textContent = `${combo}x combo!`;
+    comboEl.style.transform = `scale(${1 + Math.min(combo, 10) * 0.05})`;
+    comboEl.style.color = combo >= 8 ? '#FFD700' : combo >= 5 ? '#FF6EC7' : '#7B68EE';
+  } else {
+    comboEl.textContent = '';
+  }
+
+  let hearts = '';
+  for (let i = 0; i < 5; i++) {
+    hearts += i < lives ? '♥' : '♡';
+  }
+  livesEl.textContent = hearts;
+}
+
+// --- Game Loop ---
+let lastTime = 0;
+function gameLoop(time) {
+  const dt = Math.min((time - lastTime) / 16.67, 3);
+  lastTime = time;
+
+  // Screen shake
+  ctx.save();
+  if (shakeAmount > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * shakeAmount,
+      (Math.random() - 0.5) * shakeAmount
+    );
+    shakeAmount *= 0.9;
+    if (shakeAmount < 0.5) shakeAmount = 0;
+  }
+
+  // Background
+  ctx.fillStyle = '#050510';
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle gradient at bottom
+  const grad = ctx.createLinearGradient(0, H * 0.6, 0, H);
+  grad.addColorStop(0, 'transparent');
+  grad.addColorStop(1, '#0a0a2a20');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Pulse effect when constellation forms
+  if (pulseAlpha > 0) {
+    ctx.save();
+    ctx.globalAlpha = pulseAlpha;
+    const pulseGrad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W * 0.6);
+    pulseGrad.addColorStop(0, '#7B68EE30');
+    pulseGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = pulseGrad;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+    pulseAlpha -= 0.005 * dt;
+  }
+
+  drawBgStars(time);
+  drawConstellations();
+
+  if (gameRunning) {
+    // Spawn stars
+    spawnTimer += dt;
+    const spawnRate = Math.max(15, 50 - difficulty * 4);
+    if (spawnTimer >= spawnRate) {
+      stars.push(createStar());
+      spawnTimer = 0;
+    }
+
+    // Difficulty ramp
+    difficulty += 0.001 * dt;
+
+    // Update stars
+    for (let i = stars.length - 1; i >= 0; i--) {
+      const s = stars[i];
+
+      // Wobble movement
+      s.wobble += s.wobbleSpeed * dt;
+      s.x += Math.sin(s.wobble) * s.wobbleAmp * 0.02 * dt;
+      s.y += s.speed * dt;
+      s.rotation += s.rotSpeed * dt;
+      s.pulse += 0.05 * dt;
+
+      // Trail particles for shooting stars
+      if (s.type === 'shooting' && Math.random() < 0.5) {
+        particles.push({
+          x: s.x + (Math.random() - 0.5) * 6,
+          y: s.y - 5,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: -Math.random() * 1,
+          life: 0.8,
+          decay: 0.03,
+          color: s.color,
+          size: 2,
+          type: 'trail'
+        });
+      }
+
+      // Golden stars pulse
+      if (s.type === 'golden') {
+        s.size = 14 + Math.sin(s.pulse) * 3;
+      }
+
+      // Off screen
+      if (s.y > H + s.size + 10) {
+        stars.splice(i, 1);
+        missStar();
+        continue;
+      }
+
+      drawStar(s);
+    }
+  }
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 0.05 * dt; // gravity
+    p.life -= p.decay * dt;
+    if (p.life <= 0) {
+      particles.splice(i, 1);
+    }
+  }
+  drawParticles();
+
+  // Decay constellation lines
+  for (let i = constellationLines.length - 1; i >= 0; i--) {
+    constellationLines[i].alpha -= constellationLines[i].decay * dt;
+    if (constellationLines[i].alpha <= 0) {
+      constellationLines.splice(i, 1);
+    }
+  }
+
+  ctx.restore();
+  requestAnimationFrame(gameLoop);
+}
+
+// --- Input ---
+canvas.addEventListener('pointerdown', (e) => {
+  tryCatch(e.clientX, e.clientY);
+});
+
+// --- Start / End ---
+function startGame() {
+  stars = [];
+  particles = [];
+  constellationLines = [];
+  caughtPositions = [];
+  score = 0;
+  combo = 0;
+  maxCombo = 0;
+  lives = 5;
+  totalCaught = 0;
+  totalMissed = 0;
+  constellationsFormed = 0;
+  difficulty = 1;
+  spawnTimer = 0;
+  shakeAmount = 0;
+  pulseAlpha = 0;
+  gameRunning = true;
+  updateUI();
+  startScreen.classList.add('hidden');
+  gameOverScreen.classList.add('hidden');
+}
+
+function endGame() {
+  gameRunning = false;
+  document.getElementById('final-score').textContent = `Score: ${score.toLocaleString()}`;
+  document.getElementById('final-constellations').textContent =
+    constellationsFormed > 0 ? `✨ ${constellationsFormed} constellation${constellationsFormed > 1 ? 's' : ''} woven` : '';
+  document.getElementById('final-stats').textContent =
+    `${totalCaught} caught · ${totalMissed} missed · ${maxCombo}x max combo`;
+  gameOverScreen.classList.remove('hidden');
+}
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('restart-btn').addEventListener('click', startGame);
+
+// Start render loop (always runs for bg stars)
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
