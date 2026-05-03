@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Neon Drop — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #050510;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+.back-link:hover { color: #a080ff; }
+
+h1 {
+  font-size: 22px;
+  margin: 14px 0 4px;
+  background: linear-gradient(90deg, #a060ff, #60c0ff, #ff60a0);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: none;
+  letter-spacing: 2px;
+}
+
+#hud {
+  display: flex;
+  gap: 24px;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: #aaa;
+}
+#hud span { color: #fff; }
+
+canvas {
+  border: 1px solid #1a1a3a;
+  border-radius: 8px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+#message {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 18px;
+  color: #fff;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+  text-shadow: 0 0 20px #a060ff;
+  z-index: 10;
+}
+
+#start-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5,5,16,0.85);
+  z-index: 20;
+  cursor: pointer;
+}
+#start-overlay h2 {
+  font-size: 32px;
+  background: linear-gradient(90deg, #a060ff, #60c0ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 12px;
+}
+#start-overlay p {
+  color: #888;
+  font-size: 14px;
+}
+
+.combo-popup {
+  position: absolute;
+  font-size: 24px;
+  font-weight: bold;
+  pointer-events: none;
+  z-index: 15;
+  animation: comboFloat 1s ease-out forwards;
+}
+@keyframes comboFloat {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-60px) scale(1.4); }
+}
+
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<h1>🔮 NEON DROP</h1>
+<div id="hud">
+  Score: <span id="score">0</span> &nbsp;|&nbsp;
+  Balls: <span id="balls">10</span> &nbsp;|&nbsp;
+  Stage: <span id="stage">1</span>
+</div>
+<div style="position:relative; display:inline-block;">
+  <canvas id="game"></canvas>
+  <div id="message"></div>
+  <div id="start-overlay">
+    <h2>🔮 NEON DROP</h2>
+    <p>Click or tap to aim & launch</p>
+    <p style="margin-top:6px;color:#666;font-size:12px;">Clear pegs to advance stages</p>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const ballsEl = document.getElementById('balls');
+const stageEl = document.getElementById('stage');
+const messageEl = document.getElementById('message');
+const overlay = document.getElementById('start-overlay');
+
+// Responsive sizing
+const W = Math.min(420, window.innerWidth - 20);
+const H = Math.min(620, window.innerHeight - 100);
+canvas.width = W;
+canvas.height = H;
+
+// Game state
+let score = 0;
+let ballsLeft = 10;
+let stage = 1;
+let ball = null;
+let pegs = [];
+let particles = [];
+let comboCount = 0;
+let aimAngle = Math.PI / 2;
+let gameState = 'start'; // start, aiming, dropping, stageClear, gameOver
+let lastHitTime = 0;
+
+// Colors
+const pegColors = [
+  { r: 160, g: 96, b: 255 },   // purple
+  { r: 96, g: 192, b: 255 },   // cyan
+  { r: 255, g: 96, b: 160 },   // pink
+  { r: 255, g: 200, b: 60 },   // gold (bonus)
+];
+
+const PEG_RADIUS = 9;
+const BALL_RADIUS = 7;
+const GRAVITY = 0.12;
+const BOUNCE_DAMPING = 0.72;
+const LAUNCHER_Y = 30;
+
+class Peg {
+  constructor(x, y, type) {
+    this.x = x;
+    this.y = y;
+    this.type = type; // 0=purple, 1=cyan, 2=pink, 3=gold(bonus)
+    this.hit = false;
+    this.radius = PEG_RADIUS;
+    this.glow = 0;
+    this.pulsePhase = Math.random() * Math.PI * 2;
+  }
+
+  draw() {
+    const c = pegColors[this.type];
+    const pulse = 0.15 * Math.sin(performance.now() * 0.003 + this.pulsePhase);
+    const alpha = this.hit ? Math.max(0, this.glow) : 0.7 + pulse;
+
+    if (this.hit && this.glow <= 0) return;
+
+    ctx.save();
+    // Outer glow
+    const glowSize = this.hit ? 25 : 12;
+    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, glowSize);
+    grad.addColorStop(0, `rgba(${c.r},${c.g},${c.b},${alpha * 0.6})`);
+    grad.addColorStop(1, `rgba(${c.r},${c.g},${c.b},0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, glowSize, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Core
+    ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},${alpha})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius * (this.hit ? 1 + (1 - this.glow) * 0.3 : 1), 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bright center
+    ctx.fillStyle = `rgba(255,255,255,${alpha * 0.6})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  update() {
+    if (this.hit) {
+      this.glow -= 0.02;
+    }
+  }
+}
+
+class Ball {
+  constructor(x, y, vx, vy) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.radius = BALL_RADIUS;
+    this.trail = [];
+    this.active = true;
+  }
+
+  update() {
+    this.vy += GRAVITY;
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Wall bounce
+    if (this.x - this.radius < 0) {
+      this.x = this.radius;
+      this.vx = Math.abs(this.vx) * BOUNCE_DAMPING;
+    }
+    if (this.x + this.radius > W) {
+      this.x = W - this.radius;
+      this.vx = -Math.abs(this.vx) * BOUNCE_DAMPING;
+    }
+
+    // Ceiling bounce
+    if (this.y - this.radius < 0) {
+      this.y = this.radius;
+      this.vy = Math.abs(this.vy) * BOUNCE_DAMPING;
+    }
+
+    // Trail
+    this.trail.push({ x: this.x, y: this.y, alpha: 1 });
+    if (this.trail.length > 20) this.trail.shift();
+
+    // Out of bounds
+    if (this.y > H + 30) {
+      this.active = false;
+    }
+  }
+
+  draw() {
+    // Trail
+    for (let i = 0; i < this.trail.length; i++) {
+      const t = this.trail[i];
+      t.alpha -= 0.05;
+      if (t.alpha <= 0) continue;
+      ctx.fillStyle = `rgba(255,255,255,${t.alpha * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, this.radius * (i / this.trail.length), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Ball glow
+    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, 18);
+    grad.addColorStop(0, 'rgba(255,255,255,0.5)');
+    grad.addColorStop(1, 'rgba(160,96,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 18, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ball core
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+class Particle {
+  constructor(x, y, color) {
+    this.x = x;
+    this.y = y;
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * 4;
+    this.vx = Math.cos(angle) * speed;
+    this.vy = Math.sin(angle) * speed;
+    this.life = 1;
+    this.decay = 0.015 + Math.random() * 0.025;
+    this.color = color;
+    this.size = 2 + Math.random() * 3;
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.04;
+    this.vx *= 0.99;
+    this.life -= this.decay;
+  }
+
+  draw() {
+    if (this.life <= 0) return;
+    const c = this.color;
+    ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},${this.life})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * this.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function generatePegs() {
+  pegs = [];
+  const rows = 6 + Math.min(stage, 4);
+  const pegsPerRow = 6 + Math.min(stage, 3);
+  const startY = 80;
+  const spacingY = (H - 140) / rows;
+  const spacingX = (W - 40) / pegsPerRow;
+
+  for (let r = 0; r < rows; r++) {
+    const offset = (r % 2 === 0) ? 0 : spacingX * 0.5;
+    const cols = r % 2 === 0 ? pegsPerRow : pegsPerRow - 1;
+    for (let c = 0; c < cols; c++) {
+      const x = 30 + offset + c * spacingX;
+      const y = startY + r * spacingY;
+
+      // Determine type — mostly purple, some cyan/pink, rare gold
+      let type = 0;
+      const rand = Math.random();
+      if (rand < 0.05) type = 3;       // gold bonus
+      else if (rand < 0.2) type = 2;   // pink
+      else if (rand < 0.45) type = 1;  // cyan
+      // else purple
+
+      pegs.push(new Peg(x, y, type));
+    }
+  }
+}
+
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push(new Particle(x, y, color));
+  }
+}
+
+function showCombo(x, y, combo) {
+  const popup = document.createElement('div');
+  popup.className = 'combo-popup';
+  popup.style.left = (canvas.offsetLeft + x) + 'px';
+  popup.style.top = (canvas.offsetTop + y - 20) + 'px';
+
+  const colors = ['#a060ff', '#60c0ff', '#ff60a0', '#ffc83c'];
+  if (combo >= 10) {
+    popup.textContent = `🔥 ${combo}x COMBO!`;
+    popup.style.color = '#ffc83c';
+    popup.style.fontSize = '30px';
+    popup.style.textShadow = '0 0 20px #ffc83c';
+  } else if (combo >= 5) {
+    popup.textContent = `✨ ${combo}x!`;
+    popup.style.color = '#ff60a0';
+    popup.style.textShadow = '0 0 15px #ff60a0';
+  } else {
+    popup.textContent = `${combo}x`;
+    popup.style.color = colors[combo % colors.length];
+    popup.style.textShadow = `0 0 10px ${colors[combo % colors.length]}`;
+  }
+
+  document.body.appendChild(popup);
+  setTimeout(() => popup.remove(), 1000);
+}
+
+function showMessage(text, duration) {
+  messageEl.textContent = text;
+  messageEl.style.opacity = 1;
+  if (duration) {
+    setTimeout(() => { messageEl.style.opacity = 0; }, duration);
+  }
+}
+
+function checkCollisions() {
+  if (!ball || !ball.active) return;
+
+  for (const peg of pegs) {
+    if (peg.hit && peg.glow <= 0) continue;
+    if (peg.hit) continue;
+
+    const dx = ball.x - peg.x;
+    const dy = ball.y - peg.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const minDist = ball.radius + peg.radius;
+
+    if (dist < minDist) {
+      // Bounce
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const dotProduct = ball.vx * nx + ball.vy * ny;
+      ball.vx -= 2 * dotProduct * nx * BOUNCE_DAMPING;
+      ball.vy -= 2 * dotProduct * ny * BOUNCE_DAMPING;
+
+      // Push ball out of peg
+      const overlap = minDist - dist;
+      ball.x += nx * overlap;
+      ball.y += ny * overlap;
+
+      // Hit peg
+      peg.hit = true;
+      peg.glow = 1;
+
+      // Scoring
+      comboCount++;
+      const baseScore = peg.type === 3 ? 50 : (peg.type === 2 ? 20 : 10);
+      const comboMultiplier = Math.min(comboCount, 20);
+      const points = baseScore * comboMultiplier;
+      score += points;
+      scoreEl.textContent = score;
+
+      // Effects
+      const c = pegColors[peg.type];
+      spawnParticles(peg.x, peg.y, c, 8 + comboCount * 2);
+
+      if (comboCount >= 3) {
+        showCombo(peg.x, peg.y, comboCount);
+      }
+
+      lastHitTime = performance.now();
+    }
+  }
+}
+
+function launchBall(angle) {
+  const speed = 6;
+  const x = W / 2;
+  const y = LAUNCHER_Y;
+  const vx = Math.cos(angle) * speed;
+  const vy = Math.sin(angle) * speed;
+  ball = new Ball(x, y, vx, vy);
+  comboCount = 0;
+  ballsLeft--;
+  ballsEl.textContent = ballsLeft;
+  gameState = 'dropping';
+}
+
+function drawLauncher() {
+  const cx = W / 2;
+  const cy = LAUNCHER_Y;
+
+  // Launcher base
+  ctx.fillStyle = '#2a2a4a';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Aim line
+  const len = 50;
+  const ex = cx + Math.cos(aimAngle) * len;
+  const ey = cy + Math.sin(aimAngle) * len;
+
+  ctx.strokeStyle = 'rgba(160,96,255,0.5)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(ex, ey);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Aim dot
+  ctx.fillStyle = '#a060ff';
+  ctx.beginPath();
+  ctx.arc(ex, ey, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Launcher glow
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 20);
+  grad.addColorStop(0, 'rgba(160,96,255,0.3)');
+  grad.addColorStop(1, 'rgba(160,96,255,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 20, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBackground() {
+  // Subtle grid
+  ctx.strokeStyle = 'rgba(40,40,80,0.3)';
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x < W; x += 30) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+  for (let y = 0; y < H; y += 30) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  // Bottom catch zone glow
+  const bottomGrad = ctx.createLinearGradient(0, H - 40, 0, H);
+  bottomGrad.addColorStop(0, 'rgba(255,60,60,0)');
+  bottomGrad.addColorStop(1, 'rgba(255,60,60,0.1)');
+  ctx.fillStyle = bottomGrad;
+  ctx.fillRect(0, H - 40, W, 40);
+}
+
+function checkStageComplete() {
+  const remaining = pegs.filter(p => !p.hit);
+  if (remaining.length === 0) {
+    stage++;
+    stageEl.textContent = stage;
+    ballsLeft += 5;
+    ballsEl.textContent = ballsLeft;
+    showMessage(`✨ STAGE ${stage} ✨`, 2000);
+    generatePegs();
+    gameState = 'aiming';
+    return;
+  }
+
+  if (ballsLeft <= 0 && (!ball || !ball.active)) {
+    gameState = 'gameOver';
+    showMessage(`GAME OVER\nScore: ${score}\n\nTap to restart`, null);
+  }
+}
+
+function update() {
+  // Update pegs
+  for (const peg of pegs) peg.update();
+
+  // Update ball
+  if (ball && ball.active) {
+    ball.update();
+    checkCollisions();
+  }
+
+  // Ball fell off
+  if (ball && !ball.active && gameState === 'dropping') {
+    ball = null;
+    checkStageComplete();
+    if (gameState !== 'gameOver') {
+      gameState = 'aiming';
+    }
+  }
+
+  // Update particles
+  particles = particles.filter(p => p.life > 0);
+  for (const p of particles) p.update();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+
+  // Pegs
+  for (const peg of pegs) peg.draw();
+
+  // Ball
+  if (ball && ball.active) ball.draw();
+
+  // Particles
+  for (const p of particles) p.draw();
+
+  // Launcher (when aiming)
+  if (gameState === 'aiming') drawLauncher();
+}
+
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// Input
+function getAimAngle(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const mx = clientX - rect.left;
+  const my = clientY - rect.top;
+  const cx = W / 2;
+  const cy = LAUNCHER_Y;
+  let angle = Math.atan2(my - cy, mx - cx);
+  // Clamp to downward half
+  if (angle < 0.15) angle = 0.15;
+  if (angle > Math.PI - 0.15) angle = Math.PI - 0.15;
+  return angle;
+}
+
+canvas.addEventListener('mousemove', (e) => {
+  if (gameState === 'aiming') {
+    aimAngle = getAimAngle(e.clientX, e.clientY);
+  }
+});
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (gameState === 'aiming') {
+    const t = e.touches[0];
+    aimAngle = getAimAngle(t.clientX, t.clientY);
+  }
+}, { passive: false });
+
+function handleClick(e) {
+  if (gameState === 'start') {
+    overlay.style.display = 'none';
+    gameState = 'aiming';
+    generatePegs();
+    return;
+  }
+
+  if (gameState === 'aiming' && ballsLeft > 0) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
+    const my = (e.clientY || e.touches?.[0]?.clientY) - rect.top;
+    aimAngle = getAimAngle(mx + rect.left, my + rect.top);
+    launchBall(aimAngle);
+    return;
+  }
+
+  if (gameState === 'gameOver') {
+    // Reset
+    score = 0;
+    ballsLeft = 10;
+    stage = 1;
+    scoreEl.textContent = 0;
+    ballsEl.textContent = 10;
+    stageEl.textContent = 1;
+    ball = null;
+    particles = [];
+    messageEl.style.opacity = 0;
+    gameState = 'aiming';
+    generatePegs();
+  }
+}
+
+canvas.addEventListener('click', handleClick);
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  handleClick(e);
+}, { passive: false });
+
+// Start
+gameLoop();
+</script>
+</body>
+</html>
