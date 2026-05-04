@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Bloom — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #ff6eb4;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+}
+.back-link:hover { opacity: 1; }
+canvas { display: block; }
+#ui {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  text-align: right;
+  z-index: 100;
+  font-size: 14px;
+  line-height: 1.6;
+  text-shadow: 0 0 8px rgba(255,110,180,0.5);
+}
+#ui .score { font-size: 22px; color: #ff6eb4; }
+#ui .combo { font-size: 16px; color: #ffda6b; }
+#ui .timer { color: #8be9fd; }
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  background: rgba(10,10,26,0.92);
+  text-align: center;
+  gap: 16px;
+}
+#overlay h1 {
+  font-size: 52px;
+  background: linear-gradient(135deg, #ff6eb4, #ffda6b, #8be9fd, #50fa7b);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: none;
+}
+#overlay .sub { font-size: 16px; color: #aaa; max-width: 320px; }
+#overlay .final-score { font-size: 36px; color: #ff6eb4; margin: 8px 0; }
+#overlay button {
+  margin-top: 12px;
+  padding: 14px 40px;
+  font-size: 18px;
+  font-family: inherit;
+  border: none;
+  border-radius: 30px;
+  cursor: pointer;
+  background: linear-gradient(135deg, #ff6eb4, #bd93f9);
+  color: #fff;
+  box-shadow: 0 0 20px rgba(255,110,180,0.4);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+#overlay button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 30px rgba(255,110,180,0.6);
+}
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<canvas id="c"></canvas>
+<div id="ui" class="hidden">
+  <div class="score" id="score">0</div>
+  <div class="combo hidden" id="combo"></div>
+  <div class="timer" id="timer">60s</div>
+</div>
+<div id="overlay">
+  <h1>🌸 Bloom</h1>
+  <div class="sub">Tap to plant seeds of light. Chain nearby blooms for combos. Fill the garden before time runs out.</div>
+  <button id="startBtn">Plant</button>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const canvas = $('c');
+const ctx = canvas.getContext('2d');
+const ui = $('ui');
+const scoreEl = $('score');
+const comboEl = $('combo');
+const timerEl = $('timer');
+const overlay = $('overlay');
+const startBtn = $('startBtn');
+
+let W, H;
+function resize() {
+  W = canvas.width = innerWidth;
+  H = canvas.height = innerHeight;
+}
+resize();
+addEventListener('resize', resize);
+
+// Color palettes for flowers
+const PALETTES = [
+  ['#ff6eb4','#ff9de2','#ffd1f0'],
+  ['#bd93f9','#d4b8ff','#e8d5ff'],
+  ['#8be9fd','#b5f0ff','#daf8ff'],
+  ['#50fa7b','#8bffb0','#c3ffd6'],
+  ['#ffda6b','#ffeba3','#fff5d0'],
+  ['#ff5555','#ff8888','#ffbbbb'],
+  ['#f1fa8c','#f5fbb5','#fafde0'],
+];
+
+// State
+let blooms = [];
+let particles = [];
+let ripples = [];
+let seeds = []; // Growing seeds
+let score = 0;
+let combo = 0;
+let comboTimer = 0;
+let timeLeft = 60;
+let playing = false;
+let gameOver = false;
+let bgStars = [];
+
+// Background stars
+function initStars() {
+  bgStars = [];
+  for (let i = 0; i < 80; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.2 + 0.3,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.02 + 0.005,
+    });
+  }
+}
+initStars();
+
+// Flower geometry
+function drawPetal(cx, cy, angle, len, width, color, alpha) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.bezierCurveTo(width, -len * 0.3, width, -len * 0.7, 0, -len);
+  ctx.bezierCurveTo(-width, -len * 0.7, -width, -len * 0.3, 0, 0);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawFlower(bloom) {
+  const { x, y, petalCount, petalLen, petalWidth, palette, rotation, scale, alpha, layer } = bloom;
+  const s = scale;
+
+  // Glow
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.3;
+  const glow = ctx.createRadialGradient(x, y, 0, x, y, petalLen * s * 1.5);
+  glow.addColorStop(0, palette[0]);
+  glow.addColorStop(1, 'transparent');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, y, petalLen * s * 1.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Outer petals
+  for (let i = 0; i < petalCount; i++) {
+    const angle = rotation + (Math.PI * 2 / petalCount) * i;
+    drawPetal(x, y, angle, petalLen * s, petalWidth * s, palette[0], alpha * 0.85);
+  }
+  // Inner petals (smaller, rotated)
+  for (let i = 0; i < petalCount; i++) {
+    const angle = rotation + (Math.PI * 2 / petalCount) * i + Math.PI / petalCount;
+    drawPetal(x, y, angle, petalLen * s * 0.6, petalWidth * s * 0.7, palette[1], alpha * 0.9);
+  }
+  // Center
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  ctx.arc(x, y, petalWidth * s * 0.9, 0, Math.PI * 2);
+  ctx.fillStyle = palette[2];
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x, y, petalWidth * s * 0.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff';
+  ctx.globalAlpha = alpha * 0.7;
+  ctx.fill();
+  ctx.restore();
+}
+
+function createBloom(x, y, fromChain) {
+  const palette = PALETTES[Math.floor(Math.random() * PALETTES.length)];
+  const petalCount = Math.floor(Math.random() * 4) + 5; // 5-8 petals
+  const bloom = {
+    x, y,
+    petalCount,
+    petalLen: Math.random() * 18 + 22,
+    petalWidth: Math.random() * 6 + 8,
+    palette,
+    rotation: Math.random() * Math.PI * 2,
+    rotationSpeed: (Math.random() - 0.5) * 0.003,
+    scale: 0,
+    targetScale: 1,
+    alpha: 1,
+    age: 0,
+    fromChain,
+    chained: false,
+  };
+
+  // Seed animation
+  seeds.push({
+    x, y,
+    bloom,
+    t: 0,
+    palette,
+  });
+
+  return bloom;
+}
+
+function spawnParticles(x, y, palette, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: Math.random() * 3 + 1,
+      color: palette[Math.floor(Math.random() * palette.length)],
+      life: 1,
+      decay: Math.random() * 0.02 + 0.01,
+    });
+  }
+}
+
+function spawnRipple(x, y, color) {
+  ripples.push({ x, y, r: 0, maxR: 80 + Math.random() * 40, alpha: 0.6, color });
+}
+
+function chainBlooms(newBloom) {
+  const CHAIN_DIST = 120;
+  let chainCount = 0;
+  for (const b of blooms) {
+    if (b === newBloom || b.chained) continue;
+    const dx = b.x - newBloom.x;
+    const dy = b.y - newBloom.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < CHAIN_DIST) {
+      chainCount++;
+      b.targetScale = Math.min(b.targetScale + 0.15, 1.6);
+      spawnParticles(b.x, b.y, b.palette, 8);
+      // Draw chain line (handled in render)
+      spawnRipple((b.x + newBloom.x) / 2, (b.y + newBloom.y) / 2, newBloom.palette[0]);
+    }
+  }
+  if (chainCount > 0) {
+    combo += chainCount;
+    comboTimer = 2;
+    const bonus = chainCount * 10 * combo;
+    score += bonus;
+    spawnParticles(newBloom.x, newBloom.y, newBloom.palette, 15 + chainCount * 5);
+  }
+}
+
+function handleTap(px, py) {
+  if (!playing) return;
+
+  const bloom = createBloom(px, py, false);
+  score += 10;
+
+  spawnRipple(px, py, bloom.palette[0]);
+  spawnParticles(px, py, bloom.palette, 12);
+}
+
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  handleTap(e.clientX, e.clientY);
+});
+
+function update(dt) {
+  // Time
+  if (playing) {
+    timeLeft -= dt;
+    if (timeLeft <= 0) {
+      timeLeft = 0;
+      playing = false;
+      gameOver = true;
+      showGameOver();
+      return;
+    }
+  }
+
+  // Combo decay
+  if (comboTimer > 0) {
+    comboTimer -= dt;
+    if (comboTimer <= 0) { combo = 0; comboTimer = 0; }
+  }
+
+  // Seeds growing
+  for (let i = seeds.length - 1; i >= 0; i--) {
+    const s = seeds[i];
+    s.t += dt * 3;
+    if (s.t >= 1) {
+      s.bloom.scale = s.bloom.targetScale;
+      blooms.push(s.bloom);
+      chainBlooms(s.bloom);
+      seeds.splice(i, 1);
+    } else {
+      s.bloom.scale = easeOutBack(s.t) * s.bloom.targetScale;
+    }
+  }
+
+  // Blooms
+  for (const b of blooms) {
+    b.rotation += b.rotationSpeed;
+    b.age += dt;
+    // Gentle breathe
+    b.scale += (b.targetScale - b.scale) * 0.05;
+    // Old blooms fade after 20s
+    if (b.age > 45) {
+      b.alpha = Math.max(0, 1 - (b.age - 45) / 15);
+    }
+  }
+  blooms = blooms.filter(b => b.alpha > 0.01);
+
+  // Particles
+  for (const p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.97;
+    p.vy *= 0.97;
+    p.life -= p.decay;
+  }
+  particles = particles.filter(p => p.life > 0);
+
+  // Ripples
+  for (const r of ripples) {
+    r.r += 2.5;
+    r.alpha *= 0.96;
+  }
+  ripples = ripples.filter(r => r.alpha > 0.02);
+
+  // Stars
+  for (const s of bgStars) {
+    s.twinkle += s.speed;
+  }
+}
+
+function easeOutBack(t) {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Background gradient
+  const bg = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W, H) * 0.7);
+  bg.addColorStop(0, '#0f0f2a');
+  bg.addColorStop(1, '#0a0a1a');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  for (const s of bgStars) {
+    const a = 0.3 + 0.3 * Math.sin(s.twinkle);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Chain lines between nearby blooms
+  const CHAIN_DIST = 120;
+  ctx.lineWidth = 1;
+  for (let i = 0; i < blooms.length; i++) {
+    for (let j = i + 1; j < blooms.length; j++) {
+      const a = blooms[i], b = blooms[j];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < CHAIN_DIST) {
+        const alpha = (1 - dist / CHAIN_DIST) * 0.2 * Math.min(a.alpha, b.alpha);
+        ctx.strokeStyle = a.palette[0];
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // Ripples
+  for (const r of ripples) {
+    ctx.globalAlpha = r.alpha;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Blooms (and growing seeds)
+  for (const s of seeds) {
+    if (s.bloom.scale > 0.05) drawFlower(s.bloom);
+  }
+  for (const b of blooms) {
+    drawFlower(b);
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function updateUI() {
+  scoreEl.textContent = score;
+  timerEl.textContent = Math.ceil(timeLeft) + 's';
+  if (combo > 1) {
+    comboEl.classList.remove('hidden');
+    comboEl.textContent = `${combo}x combo!`;
+  } else {
+    comboEl.classList.add('hidden');
+  }
+}
+
+let lastTime = 0;
+function loop(ts) {
+  const dt = Math.min((ts - lastTime) / 1000, 0.1);
+  lastTime = ts;
+
+  if (playing) update(dt);
+  else {
+    // Still animate background
+    for (const s of bgStars) s.twinkle += s.speed;
+    for (const p of particles) { p.x += p.vx; p.y += p.vy; p.vx *= 0.97; p.vy *= 0.97; p.life -= p.decay; }
+    particles = particles.filter(p => p.life > 0);
+    for (const r of ripples) { r.r += 2.5; r.alpha *= 0.96; }
+    ripples = ripples.filter(r => r.alpha > 0.02);
+    for (const b of blooms) { b.rotation += b.rotationSpeed; }
+  }
+
+  render();
+  if (playing) updateUI();
+  requestAnimationFrame(loop);
+}
+
+function startGame() {
+  blooms = [];
+  particles = [];
+  ripples = [];
+  seeds = [];
+  score = 0;
+  combo = 0;
+  comboTimer = 0;
+  timeLeft = 60;
+  playing = true;
+  gameOver = false;
+  overlay.classList.add('hidden');
+  ui.classList.remove('hidden');
+  initStars();
+}
+
+function showGameOver() {
+  overlay.innerHTML = `
+    <h1>🌸 Garden Complete</h1>
+    <div class="final-score">${score}</div>
+    <div class="sub">${blooms.length} flowers planted${combo > 1 ? ` · best combo ${combo}x` : ''}</div>
+    <button id="restartBtn">Plant Again</button>
+  `;
+  overlay.classList.remove('hidden');
+  $('restartBtn').addEventListener('click', startGame);
+}
+
+startBtn.addEventListener('click', startGame);
+requestAnimationFrame(ts => { lastTime = ts; loop(ts); });
+</script>
+</body>
+</html>
