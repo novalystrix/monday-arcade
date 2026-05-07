@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Solar Storm — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #020210;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #ff8800;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+canvas { display: block; }
+#hud {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  text-align: right;
+  z-index: 100;
+  font-size: 14px;
+  line-height: 1.6;
+}
+#hud .score { font-size: 28px; font-weight: bold; color: #ffcc00; text-shadow: 0 0 12px rgba(255,200,0,0.6); }
+#hud .combo { color: #00ffcc; font-size: 16px; text-shadow: 0 0 8px rgba(0,255,200,0.5); }
+#hud .shield-bar { font-size: 14px; color: #6699ff; }
+#hud .wave { font-size: 13px; color: #ff8855; }
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2,2,16,0.93);
+  z-index: 200;
+  transition: opacity 0.4s;
+}
+#overlay.hidden { opacity: 0; pointer-events: none; }
+#overlay h1 {
+  font-size: 44px;
+  background: linear-gradient(135deg, #ff6600, #ffcc00, #ff4488);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+}
+#overlay .sub { color: #aaa; font-size: 14px; margin-bottom: 24px; text-align: center; line-height: 1.5; }
+#overlay .final-score { font-size: 32px; color: #ffcc00; margin-bottom: 12px; }
+#overlay button {
+  background: linear-gradient(135deg, #ff6600, #ffcc00);
+  border: none;
+  color: #1a0a00;
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: bold;
+  padding: 14px 40px;
+  border-radius: 30px;
+  cursor: pointer;
+  margin-top: 12px;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 0 25px rgba(255,150,0,0.5);
+}
+#overlay button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 40px rgba(255,200,0,0.7);
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+
+<div id="hud">
+  <div class="score" id="scoreEl">0</div>
+  <div class="combo" id="comboEl"></div>
+  <div class="shield-bar" id="shieldEl">🛡️ ████████████████</div>
+  <div class="wave" id="waveEl">Wave 1</div>
+</div>
+
+<div id="overlay">
+  <h1>☀️ Solar Storm</h1>
+  <div class="sub">Move your magnetic shield to deflect solar flares.<br>Chain deflections for aurora combos. Don't let plasma hit Earth!</div>
+  <button id="startBtn">DEFEND EARTH</button>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = innerWidth; H = canvas.height = innerHeight; }
+resize();
+addEventListener('resize', resize);
+
+// ── STATE ──
+let score, combo, maxCombo, shieldHP, maxShield, wave, gameRunning, gameOver;
+let flares, particles, auroraWaves, deflectBursts, floatingTexts;
+let shieldX, shieldY, shieldAngle;
+let elapsed, spawnTimer, waveTimer;
+let lastTime, screenShake, shakeX, shakeY;
+
+// shield config
+const SHIELD_RADIUS = 55;
+const SHIELD_ARC = Math.PI * 0.65;
+
+// ── HUD ──
+const scoreEl = document.getElementById('scoreEl');
+const comboEl = document.getElementById('comboEl');
+const shieldEl = document.getElementById('shieldEl');
+const waveEl = document.getElementById('waveEl');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+
+function updateHUD() {
+  scoreEl.textContent = score;
+  comboEl.textContent = combo > 1 ? `✨ x${combo} AURORA` : '';
+  const bars = Math.round((shieldHP / maxShield) * 16);
+  const color = bars > 8 ? '🛡️' : bars > 4 ? '⚠️' : '🔥';
+  shieldEl.textContent = color + ' ' + '█'.repeat(bars) + '░'.repeat(16 - bars);
+  waveEl.textContent = `Wave ${wave}`;
+}
+
+// ── SUN ──
+const sunPulseSpeed = 1.5;
+let sunPulse = 0;
+
+function drawSun() {
+  sunPulse += 0.016 * sunPulseSpeed;
+  const cx = W * 0.5, cy = -W * 0.08;
+  const baseR = W * 0.12;
+  const pulse = 1 + 0.06 * Math.sin(sunPulse * 2);
+  const r = baseR * pulse;
+
+  // corona layers
+  for (let i = 5; i >= 0; i--) {
+    const cr = r + i * (15 + 5 * Math.sin(sunPulse + i));
+    const alpha = 0.04 - i * 0.005;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.fillStyle = i % 2 === 0 ? '#ff6600' : '#ffaa00';
+    ctx.shadowColor = '#ff4400';
+    ctx.shadowBlur = 40 + i * 20;
+    ctx.beginPath();
+    ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // sun body
+  const sunGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  sunGrad.addColorStop(0, '#ffffcc');
+  sunGrad.addColorStop(0.3, '#ffdd44');
+  sunGrad.addColorStop(0.7, '#ff8800');
+  sunGrad.addColorStop(1, '#ff4400');
+  ctx.save();
+  ctx.shadowColor = '#ff6600';
+  ctx.shadowBlur = 60;
+  ctx.fillStyle = sunGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // surface noise
+  ctx.save();
+  ctx.globalAlpha = 0.15;
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 8; i++) {
+    const a = sunPulse * 0.5 + i * 0.8;
+    const sx = cx + Math.cos(a) * r * 0.5;
+    const sy = cy + Math.sin(a) * r * 0.5;
+    const sr = 10 + 8 * Math.sin(sunPulse * 3 + i);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  return { cx, cy };
+}
+
+// ── EARTH ──
+function drawEarth() {
+  const cx = W * 0.5, cy = H + W * 0.22;
+  const r = W * 0.3;
+
+  // atmosphere glow
+  const atmoGrad = ctx.createRadialGradient(cx, cy, r * 0.95, cx, cy, r * 1.15);
+  atmoGrad.addColorStop(0, 'rgba(80,160,255,0.2)');
+  atmoGrad.addColorStop(0.5, 'rgba(80,160,255,0.08)');
+  atmoGrad.addColorStop(1, 'rgba(80,160,255,0)');
+  ctx.fillStyle = atmoGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.15, 0, Math.PI * 2);
+  ctx.fill();
+
+  // earth body
+  const earthGrad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 0, cx, cy, r);
+  earthGrad.addColorStop(0, '#2266aa');
+  earthGrad.addColorStop(0.5, '#1a4488');
+  earthGrad.addColorStop(1, '#0a2244');
+  ctx.save();
+  ctx.fillStyle = earthGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // land masses (simple shapes)
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = '#44aa66';
+  const landPatches = [
+    { x: -0.1, y: -0.35, r: 0.15 },
+    { x: 0.15, y: -0.28, r: 0.1 },
+    { x: -0.2, y: -0.18, r: 0.12 },
+    { x: 0.05, y: -0.22, r: 0.08 },
+    { x: 0.25, y: -0.3, r: 0.07 },
+  ];
+  for (const lp of landPatches) {
+    ctx.beginPath();
+    ctx.arc(cx + lp.x * r, cy + lp.y * r, lp.r * r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ── STARFIELD ──
+const bgStars = Array.from({length: 100}, () => ({
+  x: Math.random(), y: Math.random(), s: 0.3 + Math.random() * 1.2,
+  twinkle: Math.random() * Math.PI * 2, speed: 0.5 + Math.random() * 2
+}));
+
+function drawStarfield(dt) {
+  ctx.fillStyle = '#020210';
+  ctx.fillRect(0, 0, W, H);
+
+  // deep space gradient
+  const spaceGrad = ctx.createRadialGradient(W*0.5, H*0.3, 0, W*0.5, H*0.3, W*0.8);
+  spaceGrad.addColorStop(0, 'rgba(20,5,40,0.3)');
+  spaceGrad.addColorStop(0.5, 'rgba(10,2,30,0.15)');
+  spaceGrad.addColorStop(1, 'rgba(2,2,16,0)');
+  ctx.fillStyle = spaceGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  for (const s of bgStars) {
+    s.twinkle += dt * s.speed;
+    const alpha = 0.2 + 0.8 * Math.abs(Math.sin(s.twinkle));
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.fillStyle = '#ccbbff';
+    ctx.beginPath();
+    ctx.arc(s.x * W, s.y * H, s.s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ── FLARE (projectile) ──
+class Flare {
+  constructor(type) {
+    this.type = type || 'normal'; // normal, big, fast, cluster
+    const sunCX = W * 0.5, sunCY = -W * 0.08;
+    const angle = Math.PI * 0.2 + Math.random() * Math.PI * 0.6;
+    this.x = sunCX + Math.cos(angle) * W * 0.13;
+    this.y = sunCY + Math.sin(angle) * W * 0.13;
+
+    const targetX = W * 0.2 + Math.random() * W * 0.6;
+    const targetY = H * 0.85 + Math.random() * H * 0.1;
+    const dx = targetX - this.x, dy = targetY - this.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    let speed = 140 + wave * 12 + Math.random() * 80;
+    if (this.type === 'fast') speed *= 1.6;
+    if (this.type === 'big') speed *= 0.75;
+    this.vx = (dx / dist) * speed;
+    this.vy = (dy / dist) * speed;
+
+    this.r = this.type === 'big' ? 14 + Math.random() * 6 : 6 + Math.random() * 5;
+    this.damage = this.type === 'big' ? 3 : 1;
+    this.points = this.type === 'big' ? 5 : this.type === 'fast' ? 3 : 1;
+    this.alive = true;
+    this.trail = [];
+    this.phase = Math.random() * Math.PI * 2;
+
+    // colors per type
+    if (this.type === 'big') { this.color = '#ff4400'; this.glow = '#ff2200'; }
+    else if (this.type === 'fast') { this.color = '#ffee44'; this.glow = '#ffcc00'; }
+    else { this.color = '#ff8800'; this.glow = '#ff6600'; }
+  }
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.phase += dt * 5;
+
+    // trail
+    this.trail.push({ x: this.x, y: this.y, life: 1 });
+    if (this.trail.length > 20) this.trail.shift();
+    for (const t of this.trail) t.life -= dt * 2.5;
+
+    // hit earth check
+    const earthCX = W * 0.5, earthCY = H + W * 0.22, earthR = W * 0.3;
+    const dx = this.x - earthCX, dy = this.y - earthCY;
+    if (Math.sqrt(dx*dx + dy*dy) < earthR + 5) {
+      this.alive = false;
+      shieldHP -= this.damage;
+      combo = 0;
+      screenShake = 0.3 + this.damage * 0.15;
+      updateHUD();
+      // impact particles
+      for (let i = 0; i < 15; i++) {
+        particles.push(new Particle(this.x, this.y, '#ff4444', 2 + Math.random() * 3));
+      }
+      if (shieldHP <= 0) endGame();
+    }
+  }
+  draw() {
+    // trail
+    for (let i = 1; i < this.trail.length; i++) {
+      const t = this.trail[i];
+      if (t.life <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha = t.life * 0.5;
+      ctx.fillStyle = this.glow;
+      ctx.shadowColor = this.glow;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, this.r * t.life * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // body
+    const pulse = 1 + 0.15 * Math.sin(this.phase);
+    ctx.save();
+    ctx.shadowColor = this.glow;
+    ctx.shadowBlur = 20 + 10 * pulse;
+    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.r * pulse);
+    grad.addColorStop(0, '#ffffcc');
+    grad.addColorStop(0.4, this.color);
+    grad.addColorStop(1, this.glow + '00');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r * pulse * 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // hot core
+    ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 5;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ── SHIELD ──
+function drawShield() {
+  const angle = shieldAngle;
+  const cx = shieldX, cy = shieldY;
+  const r = SHIELD_RADIUS;
+  const half = SHIELD_ARC / 2;
+
+  // energy field
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  // outer glow
+  for (let i = 3; i >= 0; i--) {
+    ctx.globalAlpha = 0.08 - i * 0.015;
+    ctx.strokeStyle = '#4488ff';
+    ctx.shadowColor = '#4488ff';
+    ctx.shadowBlur = 20 + i * 15;
+    ctx.lineWidth = 8 + i * 6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(0, 0, r + i * 5, angle - half, angle + half);
+    ctx.stroke();
+  }
+
+  // main arc
+  ctx.globalAlpha = 0.8;
+  ctx.strokeStyle = '#88ccff';
+  ctx.shadowColor = '#44aaff';
+  ctx.shadowBlur = 25;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, angle - half, angle + half);
+  ctx.stroke();
+
+  // bright core arc
+  ctx.globalAlpha = 0.6;
+  ctx.strokeStyle = '#ccddff';
+  ctx.lineWidth = 2;
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, angle - half, angle + half);
+  ctx.stroke();
+
+  // energy crackle
+  ctx.globalAlpha = 0.3;
+  for (let i = 0; i < 5; i++) {
+    const a = angle - half + Math.random() * SHIELD_ARC;
+    const er = r + (Math.random() - 0.5) * 20;
+    ctx.fillStyle = '#aaddff';
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * er, Math.sin(a) * er, 1 + Math.random() * 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function checkShieldDeflect() {
+  const cx = shieldX, cy = shieldY;
+  const r = SHIELD_RADIUS;
+  const half = SHIELD_ARC / 2;
+
+  for (const f of flares) {
+    if (!f.alive) continue;
+    const dx = f.x - cx, dy = f.y - cy;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < r + f.r + 15 && dist > r - 30) {
+      // check angle
+      const flareAngle = Math.atan2(dy, dx);
+      let diff = flareAngle - shieldAngle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      if (Math.abs(diff) < half + 0.2) {
+        f.alive = false;
+        combo++;
+        if (combo > maxCombo) maxCombo = combo;
+        const mult = Math.min(combo, 15);
+        score += f.points * mult;
+        updateHUD();
+        spawnDeflectEffect(f.x, f.y, combo);
+        showFloatingText(f.x, f.y - 20, `+${f.points * mult}`, combo > 5 ? '#00ffcc' : '#ffcc00');
+        if (combo > 2) spawnAuroraWave(f.x, combo);
+      }
+    }
+  }
+}
+
+// ── DEFLECT EFFECT ──
+function spawnDeflectEffect(x, y, combo) {
+  const colors = ['#44aaff', '#88ccff', '#aaddff', '#ffffff'];
+  const count = 15 + Math.min(combo * 3, 30);
+  for (let i = 0; i < count; i++) {
+    const c = colors[Math.floor(Math.random() * colors.length)];
+    particles.push(new Particle(x, y, c, 1 + Math.random() * 3));
+  }
+  // ring burst
+  deflectBursts.push({ x, y, r: 0, maxR: 60 + combo * 8, life: 1, color: combo > 5 ? '#00ffcc' : '#44aaff' });
+}
+
+function updateDeflectBursts(dt) {
+  for (const b of deflectBursts) {
+    b.r += (b.maxR - b.r) * dt * 5;
+    b.life -= dt * 2;
+  }
+  deflectBursts = deflectBursts.filter(b => b.life > 0);
+}
+
+function drawDeflectBursts() {
+  for (const b of deflectBursts) {
+    ctx.save();
+    ctx.globalAlpha = b.life * 0.6;
+    ctx.strokeStyle = b.color;
+    ctx.shadowColor = b.color;
+    ctx.shadowBlur = 15;
+    ctx.lineWidth = 2 * b.life;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ── AURORA BOREALIS ──
+function spawnAuroraWave(x, combo) {
+  const colors = ['#00ff88','#00ffcc','#4488ff','#aa44ff','#ff44aa'];
+  const c = combo > 8 ? colors[4] : combo > 5 ? colors[3] : colors[Math.floor(Math.random() * 3)];
+  auroraWaves.push({
+    x: x,
+    y: H * 0.65,
+    width: 100 + combo * 30,
+    height: 80 + combo * 15,
+    color: c,
+    life: 1,
+    phase: Math.random() * Math.PI * 2,
+    speed: 1 + Math.random()
+  });
+}
+
+function updateAurora(dt) {
+  for (const a of auroraWaves) {
+    a.life -= dt * 0.3;
+    a.phase += dt * a.speed;
+    a.y -= dt * 15;
+  }
+  auroraWaves = auroraWaves.filter(a => a.life > 0);
+}
+
+function drawAurora() {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const a of auroraWaves) {
+    ctx.globalAlpha = a.life * 0.25;
+    // multiple ribbons
+    for (let r = 0; r < 3; r++) {
+      const yOff = r * 20 - 20;
+      const waveOff = Math.sin(a.phase + r * 1.5) * 30;
+      const grad = ctx.createLinearGradient(a.x - a.width/2, 0, a.x + a.width/2, 0);
+      grad.addColorStop(0, 'transparent');
+      grad.addColorStop(0.2, a.color);
+      grad.addColorStop(0.5, a.color);
+      grad.addColorStop(0.8, a.color);
+      grad.addColorStop(1, 'transparent');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      const steps = 20;
+      const startX = a.x - a.width / 2;
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const px = startX + t * a.width;
+        const py = a.y + yOff + waveOff + Math.sin(a.phase * 2 + t * 6 + r) * (a.height * 0.3);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      for (let i = steps; i >= 0; i--) {
+        const t = i / steps;
+        const px = startX + t * a.width;
+        const py = a.y + yOff + waveOff + Math.sin(a.phase * 2 + t * 6 + r) * (a.height * 0.3) + a.height * 0.4;
+        ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// ── PARTICLES ──
+class Particle {
+  constructor(x, y, color, size) {
+    this.x = x; this.y = y;
+    this.color = color;
+    this.size = size || (1.5 + Math.random() * 3);
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 60 + Math.random() * 250;
+    this.vx = Math.cos(angle) * speed;
+    this.vy = Math.sin(angle) * speed;
+    this.life = 1;
+    this.decay = 0.6 + Math.random() * 1.2;
+    this.gravity = 80;
+  }
+  update(dt) {
+    this.vy += this.gravity * dt;
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.life -= this.decay * dt;
+  }
+  draw() {
+    if (this.life <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = this.life;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * this.life, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ── FLOATING TEXT ──
+let floatingTexts2 = [];
+function showFloatingText(x, y, text, color) {
+  floatingTexts2.push({ x, y, text, color, life: 1, vy: -100 });
+}
+function updateFloatingTexts(dt) {
+  for (const t of floatingTexts2) { t.y += t.vy * dt; t.life -= dt * 1.2; }
+  floatingTexts2 = floatingTexts2.filter(t => t.life > 0);
+}
+function drawFloatingTexts() {
+  for (const t of floatingTexts2) {
+    ctx.save();
+    ctx.globalAlpha = t.life;
+    ctx.fillStyle = t.color;
+    ctx.shadowColor = t.color;
+    ctx.shadowBlur = 10;
+    ctx.font = 'bold 20px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(t.text, t.x, t.y);
+    ctx.restore();
+  }
+}
+
+// ── AMBIENT SOLAR WIND PARTICLES ──
+let solarWind = [];
+function updateSolarWind(dt) {
+  // spawn
+  if (Math.random() < dt * 15) {
+    solarWind.push({
+      x: W * 0.3 + Math.random() * W * 0.4,
+      y: -10,
+      vy: 40 + Math.random() * 80,
+      vx: (Math.random() - 0.5) * 30,
+      size: 0.5 + Math.random() * 1.5,
+      life: 1,
+      color: Math.random() > 0.5 ? '#ff660033' : '#ffaa0022'
+    });
+  }
+  for (const p of solarWind) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= dt * 0.15;
+  }
+  solarWind = solarWind.filter(p => p.life > 0 && p.y < H);
+}
+function drawSolarWind() {
+  for (const p of solarWind) {
+    ctx.save();
+    ctx.globalAlpha = p.life * 0.3;
+    ctx.fillStyle = '#ff8800';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ── INPUT ──
+let mouseX = W / 2, mouseY = H * 0.7;
+
+function onMove(x, y) {
+  mouseX = x;
+  mouseY = y;
+}
+
+canvas.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
+canvas.addEventListener('touchmove', e => { e.preventDefault(); onMove(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); onMove(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
+
+// ── WAVE SPAWNING ──
+function getSpawnRate() {
+  const base = 1.2;
+  return Math.max(0.2, base - wave * 0.06);
+}
+
+function spawnFlare() {
+  let type = 'normal';
+  const r = Math.random();
+  if (wave >= 3 && r < 0.15) type = 'big';
+  else if (wave >= 2 && r < 0.35) type = 'fast';
+  flares.push(new Flare(type));
+
+  // cluster waves after wave 4
+  if (wave >= 4 && Math.random() < 0.2) {
+    setTimeout(() => { if (gameRunning) flares.push(new Flare('normal')); }, 200);
+    setTimeout(() => { if (gameRunning) flares.push(new Flare('normal')); }, 400);
+  }
+}
+
+function checkWave() {
+  waveTimer -= 0.016;
+  if (waveTimer <= 0) {
+    wave++;
+    waveTimer = 18 + wave * 2; // longer waves as difficulty increases
+    maxShield = Math.min(maxShield + 1, 25);
+    shieldHP = Math.min(shieldHP + 3, maxShield);
+    updateHUD();
+    showFloatingText(W / 2, H * 0.4, `⚡ WAVE ${wave} ⚡`, '#ff8855');
+  }
+}
+
+// ── SCREEN SHAKE ──
+function applyShake(dt) {
+  if (screenShake > 0) {
+    shakeX = (Math.random() - 0.5) * screenShake * 20;
+    shakeY = (Math.random() - 0.5) * screenShake * 20;
+    screenShake -= dt * 3;
+  } else {
+    shakeX = 0; shakeY = 0;
+  }
+}
+
+// ── GAME LOOP ──
+function gameLoop(time) {
+  if (!gameRunning) return;
+  const dt = Math.min((time - lastTime) / 1000, 0.05);
+  lastTime = time;
+  elapsed += dt;
+
+  // shield follows mouse/touch, clamped to lower area
+  shieldX = mouseX;
+  shieldY = Math.max(H * 0.35, Math.min(mouseY, H * 0.88));
+  // angle from Earth center toward shield
+  const earthCX = W * 0.5, earthCY = H + W * 0.22;
+  shieldAngle = Math.atan2(shieldY - earthCY, shieldX - earthCX);
+
+  // spawn
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    spawnFlare();
+    spawnTimer = getSpawnRate();
+  }
+
+  checkWave();
+  checkShieldDeflect();
+  applyShake(dt);
+
+  // update
+  for (const f of flares) f.update(dt);
+  for (const p of particles) p.update(dt);
+  updateAurora(dt);
+  updateDeflectBursts(dt);
+  updateFloatingTexts(dt);
+  updateSolarWind(dt);
+
+  // cleanup
+  flares = flares.filter(f => f.alive && f.y < H + 50);
+  particles = particles.filter(p => p.life > 0);
+
+  // ── DRAW ──
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  drawStarfield(dt);
+  drawSolarWind();
+  drawSun();
+  drawAurora();
+
+  for (const f of flares) f.draw();
+  drawShield();
+  drawDeflectBursts();
+  for (const p of particles) p.draw();
+  drawFloatingTexts();
+  drawEarth();
+
+  ctx.restore();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// ── GAME FLOW ──
+function startGame() {
+  score = 0; combo = 0; maxCombo = 0; wave = 1;
+  shieldHP = 15; maxShield = 15;
+  gameRunning = false; gameOver = false;
+  flares = []; particles = []; auroraWaves = []; deflectBursts = []; floatingTexts2 = []; solarWind = [];
+  shieldX = W / 2; shieldY = H * 0.7; shieldAngle = -Math.PI / 2;
+  elapsed = 0; spawnTimer = 1; waveTimer = 20;
+  screenShake = 0; shakeX = 0; shakeY = 0;
+  updateHUD();
+  overlay.classList.add('hidden');
+  gameRunning = true;
+  lastTime = performance.now();
+  requestAnimationFrame(gameLoop);
+}
+
+function endGame() {
+  gameRunning = false;
+  gameOver = true;
+  overlay.classList.remove('hidden');
+  overlay.innerHTML = `
+    <h1>☀️ Earth Fell</h1>
+    <div class="final-score">Score: ${score}</div>
+    <div class="sub">Waves survived: ${wave} | Best combo: x${maxCombo}</div>
+    <button onclick="startGame()">DEFEND AGAIN</button>
+  `;
+}
+
+startBtn.addEventListener('click', startGame);
+</script>
+</body>
+</html>
