@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Orbit Surge — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #04040c;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+  min-height: 100vh; font-family: 'Courier New', monospace; color: #fff;
+  overflow: hidden; user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px; color: #4040aa;
+  text-decoration: none; font-size: 13px; z-index: 100; transition: color 0.2s;
+}
+.back-link:hover { color: #00d4ff; }
+canvas { display: block; }
+.overlay {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(4,4,12,0.92); z-index: 20; gap: 14px;
+}
+.overlay h1 {
+  font-size: 2.6rem; letter-spacing: 0.18em; text-transform: uppercase;
+  background: linear-gradient(135deg, #a855f7, #00d4ff, #39ff14);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 20px rgba(168,85,247,0.5));
+}
+.overlay .sub { color: #555577; font-size: 0.8rem; letter-spacing: 0.1em; }
+.overlay .final-score { font-size: 3rem; color: #a855f7; text-shadow: 0 0 24px #a855f788; }
+.overlay .best-line { color: #ff6b9d; font-size: 0.85rem; }
+.btn {
+  padding: 12px 36px; background: transparent; border: 2px solid #a855f7;
+  color: #a855f7; font-family: 'Courier New', monospace; font-size: 1rem;
+  letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer;
+  border-radius: 4px; transition: all 0.2s;
+}
+.btn:hover { background: #a855f7; color: #04040c; box-shadow: 0 0 20px #a855f788; }
+.controls-hint { font-size: 0.65rem; color: #333355; text-align: center; line-height: 1.8; }
+.hud {
+  position: fixed; top: 0; left: 0; right: 0; display: flex;
+  justify-content: space-between; padding: 12px 20px; z-index: 10;
+  pointer-events: none; font-size: 0.75rem; letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.hud-score { color: #a855f7; }
+.hud-combo { color: #39ff14; }
+.hud-best { color: #ff6b9d; }
+.hud-val { font-size: 1.3rem; margin-top: 2px; }
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Back to Arcade</a>
+
+<div class="hud" id="hud" style="display:none">
+  <div><div class="hud-score">Score</div><div class="hud-val" id="scoreVal" style="color:#a855f7">0</div></div>
+  <div style="text-align:center"><div class="hud-combo">Combo</div><div class="hud-val" id="comboVal" style="color:#39ff14">×1</div></div>
+  <div style="text-align:right"><div class="hud-best">Best</div><div class="hud-val" id="bestVal" style="color:#ff6b9d">0</div></div>
+</div>
+
+<canvas id="game"></canvas>
+
+<div class="overlay" id="startScreen">
+  <h1>Orbit Surge</h1>
+  <div class="sub">Slingshot through gravity wells</div>
+  <button class="btn" onclick="startGame()">LAUNCH</button>
+  <div class="controls-hint">
+    Click/tap &amp; hold near a gravity well to orbit it<br>
+    Release to slingshot forward · Chain wells for combos
+  </div>
+  <div style="color:#222244;font-size:0.65rem;margin-top:8px">Built by Orion Solarin</div>
+</div>
+
+<div class="overlay" id="gameOverScreen" style="display:none">
+  <h1 style="background:linear-gradient(135deg,#ff2d9b,#ff6b4a);-webkit-background-clip:text;-webkit-text-fill-color:transparent">LOST IN THE VOID</h1>
+  <div class="final-score" id="finalScore">0</div>
+  <div class="best-line" id="bestLine">Best: 0</div>
+  <button class="btn" onclick="startGame()">RELAUNCH</button>
+</div>
+
+<script>
+// ─── SETUP ──────────────────────────
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W, H, DPR;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ─── STATE ──────────────────────────
+let player, wells, orbs, particles, stars;
+let score, combo, maxCombo, highScore, running, gameOver;
+let cameraX, cameraY;
+let holding, activeWell, orbitAngle, orbitDir;
+let animId, lastTime;
+let shakeTime = 0, shakeMag = 0;
+let surgeTrail = [];
+let difficulty;
+let launchTrail = [];
+
+highScore = parseInt(localStorage.getItem('orbit-surge-best') || '0');
+document.getElementById('bestVal').textContent = highScore;
+
+// ─── HELPERS ────────────────────────
+const rand = (a, b) => a + Math.random() * (b - a);
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+function hsl(h, s, l, a) { return `hsla(${h},${s}%,${l}%,${a || 1})`; }
+
+// ─── STAR FIELD ─────────────────────
+function makeStars(n) {
+  const s = [];
+  for (let i = 0; i < n; i++) {
+    s.push({ x: rand(-2000, 8000), y: rand(-2000, 4000), r: rand(0.3, 1.5), b: rand(0.2, 0.8), twinkle: rand(0, Math.PI * 2) });
+  }
+  return s;
+}
+
+// ─── WELL GENERATION ────────────────
+function makeWell(x, yRange) {
+  const r = rand(30, 55) + difficulty * 2;
+  const orbitR = r + rand(25, 45);
+  const hue = rand(0, 1) > 0.5 ? rand(250, 290) : rand(160, 200);
+  return {
+    x, y: rand(yRange[0], yRange[1]),
+    r, orbitR, hue,
+    pulse: rand(0, Math.PI * 2),
+    used: false
+  };
+}
+
+function generateWells(startX, count) {
+  const w = [];
+  for (let i = 0; i < count; i++) {
+    const x = startX + i * rand(220, 360);
+    const yRange = [H * 0.2, H * 0.8];
+    w.push(makeWell(x, yRange));
+  }
+  return w;
+}
+
+// ─── ORB GENERATION ─────────────────
+function generateOrbs(wellArr) {
+  const o = [];
+  wellArr.forEach(w => {
+    const count = Math.floor(rand(2, 5));
+    for (let i = 0; i < count; i++) {
+      const angle = rand(0, Math.PI * 2);
+      const dist = w.orbitR + rand(15, 60);
+      o.push({
+        x: w.x + Math.cos(angle) * dist,
+        y: w.y + Math.sin(angle) * dist,
+        collected: false,
+        pulse: rand(0, Math.PI * 2),
+        hue: rand(40, 140)
+      });
+    }
+  });
+  return o;
+}
+
+// ─── PARTICLES ──────────────────────
+function spawnBurst(x, y, count, hue, speed) {
+  for (let i = 0; i < count; i++) {
+    const a = rand(0, Math.PI * 2);
+    const sp = rand(0.5, speed || 3);
+    particles.push({
+      x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: 1, hue, size: rand(1.5, 4)
+    });
+  }
+}
+
+// ─── INIT ───────────────────────────
+function init() {
+  difficulty = 0;
+  player = { x: 80, y: H / 2, vx: 2.5, vy: 0, r: 8, alive: true, trail: [] };
+  wells = generateWells(250, 30);
+  orbs = generateOrbs(wells);
+  particles = [];
+  stars = makeStars(300);
+  score = 0; combo = 0; maxCombo = 0;
+  cameraX = 0; cameraY = 0;
+  holding = false; activeWell = null; orbitAngle = 0; orbitDir = 1;
+  surgeTrail = []; launchTrail = [];
+  shakeTime = 0; shakeMag = 0;
+  lastTime = performance.now();
+}
+
+// ─── START ──────────────────────────
+function startGame() {
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('gameOverScreen').style.display = 'none';
+  document.getElementById('hud').style.display = 'flex';
+  init();
+  running = true; gameOver = false;
+  if (animId) cancelAnimationFrame(animId);
+  loop();
+  updateHUD();
+}
+
+function updateHUD() {
+  document.getElementById('scoreVal').textContent = score;
+  document.getElementById('comboVal').textContent = combo > 1 ? `×${combo}` : '×1';
+  document.getElementById('bestVal').textContent = highScore;
+}
+
+// ─── INPUT ──────────────────────────
+let pointerDown = false;
+let pointerX = 0, pointerY = 0;
+
+function getWorldPos(cx, cy) {
+  return { x: cx + cameraX, y: cy + cameraY };
+}
+
+function onDown(cx, cy) {
+  if (!running || gameOver) return;
+  pointerDown = true;
+  pointerX = cx; pointerY = cy;
+  tryGrab(cx, cy);
+}
+function onUp() {
+  if (!running || gameOver) return;
+  if (holding && activeWell) {
+    launch();
+  }
+  pointerDown = false;
+  holding = false;
+  activeWell = null;
+}
+function onMove(cx, cy) {
+  pointerX = cx; pointerY = cy;
+}
+
+canvas.addEventListener('mousedown', e => onDown(e.clientX, e.clientY));
+canvas.addEventListener('mouseup', () => onUp());
+canvas.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
+canvas.addEventListener('touchstart', e => { e.preventDefault(); onDown(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
+canvas.addEventListener('touchend', e => { e.preventDefault(); onUp(); }, { passive: false });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); onMove(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
+
+function tryGrab(cx, cy) {
+  const wp = getWorldPos(cx, cy);
+  for (const w of wells) {
+    if (w.used) continue;
+    const d = dist(wp, w);
+    if (d < w.orbitR + 60) {
+      holding = true;
+      activeWell = w;
+      const angle = Math.atan2(player.y - w.y, player.x - w.x);
+      orbitAngle = angle;
+      // Determine orbit direction from player velocity
+      const cross = (player.x - w.x) * player.vy - (player.y - w.y) * player.vx;
+      orbitDir = cross >= 0 ? 1 : -1;
+      return;
+    }
+  }
+}
+
+function launch() {
+  if (!activeWell) return;
+  const w = activeWell;
+  w.used = true;
+
+  // Tangent velocity from orbit
+  const speed = 3.5 + difficulty * 0.15 + combo * 0.3;
+  player.vx = -Math.sin(orbitAngle) * orbitDir * speed;
+  player.vy = Math.cos(orbitAngle) * orbitDir * speed;
+
+  // Ensure forward momentum
+  if (player.vx < 1) player.vx = Math.max(player.vx, 1.5 + difficulty * 0.1);
+
+  combo++;
+  if (combo > maxCombo) maxCombo = combo;
+  score += combo * 10;
+
+  // Visual burst
+  spawnBurst(player.x, player.y, 20 + combo * 5, w.hue, 4 + combo);
+  shakeMag = Math.min(8, 2 + combo); shakeTime = 0.2;
+
+  // Launch trail flash
+  launchTrail.push({ x: player.x, y: player.y, life: 1, hue: w.hue });
+
+  updateHUD();
+}
+
+// ─── UPDATE ─────────────────────────
+function update(dt) {
+  if (!player.alive) return;
+
+  // Orbit or free-fly
+  if (holding && activeWell) {
+    const w = activeWell;
+    const orbitSpeed = (2.5 + difficulty * 0.3) / w.orbitR;
+    orbitAngle += orbitDir * orbitSpeed * dt * 60;
+    player.x = w.x + Math.cos(orbitAngle) * w.orbitR;
+    player.y = w.y + Math.sin(orbitAngle) * w.orbitR;
+    player.vx = 0; player.vy = 0;
+  } else {
+    // Gravity pull from nearby wells (subtle)
+    for (const w of wells) {
+      const d = dist(player, w);
+      if (d < 300 && d > w.r) {
+        const pull = 400 / (d * d);
+        player.vx += ((w.x - player.x) / d) * pull * dt * 60;
+        player.vy += ((w.y - player.y) / d) * pull * dt * 60;
+      }
+    }
+
+    // Slight downward drift
+    player.vy += 0.015 * dt * 60;
+
+    player.x += player.vx * dt * 60;
+    player.y += player.vy * dt * 60;
+
+    // Combo resets if no grab for too long past a well
+    if (!holding && combo > 0) {
+      // Check if we're past all nearby wells without grabbing
+      const nearWell = wells.find(w => !w.used && Math.abs(w.x - player.x) < w.orbitR + 100);
+      if (!nearWell && player.vx > 0) {
+        // look behind — if closest unused well is behind us, reset combo
+        const ahead = wells.filter(w => !w.used && w.x > player.x);
+        if (ahead.length > 0 && ahead[0].x - player.x > 300) {
+          combo = 0;
+          updateHUD();
+        }
+      }
+    }
+  }
+
+  // Trail
+  player.trail.push({ x: player.x, y: player.y, life: 1 });
+  if (player.trail.length > 40) player.trail.shift();
+  player.trail.forEach(t => t.life -= 0.025);
+  player.trail = player.trail.filter(t => t.life > 0);
+
+  // Camera follows player
+  const targetCX = player.x - W * 0.25;
+  const targetCY = player.y - H * 0.5;
+  cameraX = lerp(cameraX, targetCX, 0.08);
+  cameraY = lerp(cameraY, targetCY, 0.08);
+
+  // Collect orbs
+  orbs.forEach(o => {
+    if (!o.collected && dist(player, o) < player.r + 10) {
+      o.collected = true;
+      score += 5 * Math.max(1, combo);
+      spawnBurst(o.x, o.y, 8, o.hue, 2);
+      updateHUD();
+    }
+  });
+
+  // Collision with wells
+  for (const w of wells) {
+    if (w === activeWell) continue;
+    if (dist(player, w) < w.r - 5) {
+      die(); return;
+    }
+  }
+
+  // Out of bounds (vertical)
+  if (player.y < -200 || player.y > H + 500) {
+    die(); return;
+  }
+
+  // Going backwards too much
+  if (player.vx < -2 && !holding) {
+    die(); return;
+  }
+
+  // Extend world
+  const lastWell = wells[wells.length - 1];
+  if (lastWell.x - player.x < W * 2) {
+    difficulty += 0.5;
+    const newWells = generateWells(lastWell.x + rand(220, 360), 15);
+    wells.push(...newWells);
+    orbs.push(...generateOrbs(newWells));
+    stars.push(...makeStars(50));
+  }
+
+  // Cleanup far-behind entities
+  wells = wells.filter(w => w.x > player.x - 600);
+  orbs = orbs.filter(o => o.x > player.x - 600);
+
+  // Particles
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.02;
+    p.life -= 0.03;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // Launch trail
+  launchTrail.forEach(t => t.life -= 0.02);
+  launchTrail = launchTrail.filter(t => t.life > 0);
+
+  // Shake
+  if (shakeTime > 0) shakeTime -= dt;
+
+  // Engine particles while orbiting
+  if (holding && activeWell) {
+    if (Math.random() > 0.5) {
+      spawnBurst(player.x, player.y, 1, activeWell.hue, 1);
+    }
+  }
+}
+
+function die() {
+  player.alive = false;
+  spawnBurst(player.x, player.y, 40, 0, 5);
+  shakeMag = 12; shakeTime = 0.4;
+
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('orbit-surge-best', highScore);
+  }
+
+  setTimeout(() => {
+    running = false; gameOver = true;
+    document.getElementById('finalScore').textContent = score;
+    document.getElementById('bestLine').textContent = `Best: ${highScore}`;
+    document.getElementById('gameOverScreen').style.display = 'flex';
+  }, 600);
+}
+
+// ─── RENDER ─────────────────────────
+function render() {
+  ctx.save();
+
+  // Shake
+  let sx = 0, sy = 0;
+  if (shakeTime > 0) {
+    sx = (Math.random() - 0.5) * shakeMag * 2;
+    sy = (Math.random() - 0.5) * shakeMag * 2;
+  }
+  ctx.translate(sx, sy);
+
+  // Background
+  ctx.fillStyle = '#04040c';
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars (parallax)
+  stars.forEach(s => {
+    const sx2 = s.x - cameraX * 0.15;
+    const sy2 = s.y - cameraY * 0.15;
+    if (sx2 < -50 || sx2 > W + 50 || sy2 < -50 || sy2 > H + 50) return;
+    s.twinkle += 0.02;
+    const a = s.b * (0.6 + 0.4 * Math.sin(s.twinkle));
+    ctx.fillStyle = `rgba(200,210,255,${a})`;
+    ctx.beginPath();
+    ctx.arc(sx2, sy2, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.save();
+  ctx.translate(-cameraX, -cameraY);
+
+  // Gravity well connection lines (hint for next well)
+  const upcomingWells = wells.filter(w => !w.used && w.x > player.x - 50).slice(0, 5);
+  for (let i = 0; i < upcomingWells.length - 1; i++) {
+    const a = upcomingWells[i], b = upcomingWells[i + 1];
+    ctx.strokeStyle = `rgba(168,85,247,0.06)`;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 8]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Wells
+  wells.forEach(w => {
+    const wx = w.x, wy = w.y;
+    w.pulse += 0.03;
+
+    // Outer orbit ring
+    const ringAlpha = w.used ? 0.05 : 0.15 + 0.05 * Math.sin(w.pulse);
+    ctx.strokeStyle = hsl(w.hue, 80, 60, ringAlpha);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(wx, wy, w.orbitR, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Core glow
+    const glowAlpha = w.used ? 0.1 : 0.3 + 0.1 * Math.sin(w.pulse);
+    const grad = ctx.createRadialGradient(wx, wy, 0, wx, wy, w.r * 1.5);
+    grad.addColorStop(0, hsl(w.hue, 90, 70, glowAlpha));
+    grad.addColorStop(0.5, hsl(w.hue, 80, 50, glowAlpha * 0.5));
+    grad.addColorStop(1, hsl(w.hue, 70, 30, 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(wx, wy, w.r * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Core
+    const coreAlpha = w.used ? 0.3 : 0.8;
+    ctx.fillStyle = hsl(w.hue, 70, 40, coreAlpha);
+    ctx.beginPath();
+    ctx.arc(wx, wy, w.r * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Active well highlight
+    if (w === activeWell && holding) {
+      ctx.strokeStyle = hsl(w.hue, 90, 70, 0.6);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(wx, wy, w.orbitR, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Direction indicator
+      const futureAngle = orbitAngle + orbitDir * 0.5;
+      const tipX = wx + Math.cos(futureAngle) * (w.orbitR + 15);
+      const tipY = wy + Math.sin(futureAngle) * (w.orbitR + 15);
+      ctx.fillStyle = hsl(w.hue, 90, 80, 0.5);
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+
+  // Orbs
+  orbs.forEach(o => {
+    if (o.collected) return;
+    o.pulse += 0.06;
+    const pulse = 1 + 0.15 * Math.sin(o.pulse);
+    const r = 6 * pulse;
+    ctx.shadowColor = hsl(o.hue, 90, 65);
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = hsl(o.hue, 90, 65, 0.9);
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+
+  // Launch trail
+  launchTrail.forEach(t => {
+    const r = 30 * t.life;
+    const grad = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, r);
+    grad.addColorStop(0, hsl(t.hue, 90, 70, t.life * 0.4));
+    grad.addColorStop(1, hsl(t.hue, 90, 50, 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Player trail
+  player.trail.forEach((t, i) => {
+    const a = t.life * 0.5;
+    const hue = combo > 3 ? 280 + i * 3 : 190;
+    ctx.fillStyle = hsl(hue, 80, 60, a);
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, player.r * t.life * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Player
+  if (player.alive) {
+    const hue = combo > 3 ? 280 : combo > 1 ? 230 : 190;
+    // Outer glow
+    ctx.shadowColor = hsl(hue, 90, 70);
+    ctx.shadowBlur = 20 + combo * 3;
+    ctx.fillStyle = hsl(hue, 90, 80, 0.95);
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+    ctx.fill();
+    // Inner bright core
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.r * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = hsl(p.hue, 90, 65);
+    ctx.shadowColor = hsl(p.hue, 90, 65);
+    ctx.shadowBlur = 4;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+
+  ctx.restore(); // camera
+  ctx.restore(); // shake
+
+  // Combo display (screen-space)
+  if (combo >= 3) {
+    const comboText = `×${combo} CHAIN`;
+    ctx.save();
+    ctx.font = `bold ${20 + combo}px 'Courier New', monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = hsl(280, 90, 70, 0.8);
+    ctx.shadowColor = '#a855f7';
+    ctx.shadowBlur = 20;
+    ctx.fillText(comboText, W / 2, H * 0.15);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
+// ─── GAME LOOP ──────────────────────
+function loop() {
+  const now = performance.now();
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  if (running && player.alive) {
+    update(dt);
+  }
+  render();
+  animId = requestAnimationFrame(loop);
+}
+
+// ─── KEYBOARD ───────────────────────
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'Enter') {
+    if (gameOver) startGame();
+    else if (!running) startGame();
+  }
+});
+</script>
+</body>
+</html>
