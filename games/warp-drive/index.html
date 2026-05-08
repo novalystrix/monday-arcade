@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Warp Drive</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #060612;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+canvas { display: block; width: 100vw; height: 100vh; }
+.back-link {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  color: #6040cc;
+  opacity: 0.7;
+  text-decoration: none;
+  font-size: 16px;
+  font-family: 'Courier New', monospace;
+  z-index: 100;
+  transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+#hud {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  pointer-events: none;
+  z-index: 50;
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+#lives {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 24px;
+  z-index: 50;
+  pointer-events: none;
+  text-shadow: 0 0 10px #ff3080;
+}
+#score {
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  font-size: 18px;
+  z-index: 50;
+  pointer-events: none;
+  color: #00f0ff;
+  text-shadow: 0 0 8px #00f0ff;
+}
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+<div id="lives"></div>
+<div id="score"></div>
+<canvas id="c"></canvas>
+<script>
+(function() {
+'use strict';
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const livesEl = document.getElementById('lives');
+const scoreEl = document.getElementById('score');
+
+// Colors
+const PURPLE = '#6040cc';
+const CYAN = '#00f0ff';
+const PINK = '#ff3080';
+const GOLD = '#ffd700';
+const BG = '#060612';
+
+// Game state
+let W, H, cx, cy;
+let state = 'start'; // start, playing, gameover
+let score, lives, speed, distance, energyCollected;
+let playerX, playerY; // -1 to 1 normalized
+let targetPlayerX, targetPlayerY;
+let shakeX, shakeY, shakeDecay;
+let highScore = parseInt(localStorage.getItem('warpDriveHigh')) || 0;
+let lastTime, dt;
+let tunnelOffset = 0;
+let colorShift = 0;
+let speedBoostTimer = 0;
+
+// Tunnel rings
+const RING_COUNT = 60;
+const RING_SPACING = 18;
+let rings = [];
+
+// Obstacles & orbs
+let obstacles = [];
+let orbs = [];
+let particles = [];
+let starStreaks = [];
+
+// Input
+let keys = {};
+let touchStartX = null, touchStartY = null;
+let touchCurrentX = null, touchCurrentY = null;
+let mouseX = null, mouseY = null;
+let useMouseControl = false;
+
+function resize() {
+  W = canvas.width = window.innerWidth * devicePixelRatio;
+  H = canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  cx = W / 2;
+  cy = H / 2;
+  initStarStreaks();
+}
+
+function initStarStreaks() {
+  starStreaks = [];
+  for (let i = 0; i < 120; i++) {
+    starStreaks.push({
+      x: (Math.random() - 0.5) * W * 2,
+      y: (Math.random() - 0.5) * H * 2,
+      z: Math.random() * 1000,
+      speed: 2 + Math.random() * 4
+    });
+  }
+}
+
+function initGame() {
+  score = 0;
+  lives = 3;
+  speed = 3;
+  distance = 0;
+  energyCollected = 0;
+  playerX = 0;
+  playerY = 0;
+  targetPlayerX = 0;
+  targetPlayerY = 0;
+  shakeX = 0;
+  shakeY = 0;
+  shakeDecay = 0;
+  speedBoostTimer = 0;
+  tunnelOffset = 0;
+  colorShift = 0;
+  obstacles = [];
+  orbs = [];
+  particles = [];
+  rings = [];
+  for (let i = 0; i < RING_COUNT; i++) {
+    rings.push({ z: i * RING_SPACING });
+  }
+}
+
+// Tunnel curve function - subtle sinusoidal curve
+function tunnelCurve(z) {
+  let t = (z + distance * 0.5) * 0.003;
+  return {
+    x: Math.sin(t * 1.3) * 0.15 + Math.sin(t * 0.7) * 0.1,
+    y: Math.cos(t * 0.9) * 0.08 + Math.sin(t * 1.1) * 0.05
+  };
+}
+
+function project(x3d, y3d, z3d) {
+  let fov = 500;
+  if (z3d <= 1) z3d = 1;
+  let scale = fov / z3d;
+  return {
+    x: cx + x3d * scale + shakeX,
+    y: cy + y3d * scale + shakeY,
+    scale: scale
+  };
+}
+
+function hslColor(h, s, l, a) {
+  return `hsla(${h % 360}, ${s}%, ${l}%, ${a})`;
+}
+
+function currentPalette(z) {
+  let t = colorShift + z * 0.01;
+  let hue = (t * 30) % 360;
+  return hue;
+}
+
+// --- DRAWING ---
+
+function drawStarStreaks() {
+  ctx.save();
+  for (let s of starStreaks) {
+    s.z -= speed * 8 * (dt || 0.016);
+    if (s.z <= 0) {
+      s.z = 800 + Math.random() * 200;
+      s.x = (Math.random() - 0.5) * W * 2;
+      s.y = (Math.random() - 0.5) * H * 2;
+    }
+    let p1 = project(s.x, s.y, s.z);
+    let p2 = project(s.x, s.y, s.z + speed * 20);
+    let alpha = Math.max(0, 1 - s.z / 1000) * 0.6;
+    ctx.strokeStyle = `rgba(180, 200, 255, ${alpha})`;
+    ctx.lineWidth = Math.max(0.5, p1.scale * 0.3);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawTunnel() {
+  ctx.save();
+  ctx.lineWidth = 1.5;
+
+  let segments = 16; // number of sides per ring
+
+  for (let i = rings.length - 1; i >= 0; i--) {
+    let ring = rings[i];
+    let z = ring.z;
+    let curve = tunnelCurve(z);
+    let radius = 3.2;
+    let hue = currentPalette(z);
+    let depthFactor = Math.max(0, 1 - z / (RING_COUNT * RING_SPACING));
+    let alpha = depthFactor * 0.7;
+    let pulseAmt = 0.15 * Math.sin(colorShift * 2 + z * 0.05);
+
+    // Draw ring
+    ctx.shadowBlur = 12 * depthFactor;
+    ctx.shadowColor = hslColor(hue, 90, 60, 0.8);
+    ctx.strokeStyle = hslColor(hue, 85, 55 + pulseAmt * 30, alpha);
+
+    ctx.beginPath();
+    for (let s = 0; s <= segments; s++) {
+      let angle = (s / segments) * Math.PI * 2;
+      let rx = Math.cos(angle) * radius + curve.x;
+      let ry = Math.sin(angle) * radius * 0.9 + curve.y;
+      let p = project(rx, ry, z);
+      if (s === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+
+    // Draw grid lines connecting to next ring
+    if (i < rings.length - 1) {
+      let nextZ = rings[i + 1] ? rings[i + 1].z : z + RING_SPACING;
+      let nextCurve = tunnelCurve(nextZ);
+      let nextDepth = Math.max(0, 1 - nextZ / (RING_COUNT * RING_SPACING));
+      let lineAlpha = Math.min(alpha, nextDepth * 0.7) * 0.4;
+
+      ctx.shadowBlur = 6 * depthFactor;
+      ctx.strokeStyle = hslColor(hue + 30, 80, 45, lineAlpha);
+
+      for (let s = 0; s < segments; s += 2) {
+        let angle = (s / segments) * Math.PI * 2;
+        let rx1 = Math.cos(angle) * radius + curve.x;
+        let ry1 = Math.sin(angle) * radius * 0.9 + curve.y;
+        let rx2 = Math.cos(angle) * radius + nextCurve.x;
+        let ry2 = Math.sin(angle) * radius * 0.9 + nextCurve.y;
+        let p1 = project(rx1, ry1, z);
+        let p2 = project(rx2, ry2, nextZ);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+      }
+    }
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawObstacles() {
+  ctx.save();
+  for (let obs of obstacles) {
+    if (obs.z <= 0 || obs.z > RING_COUNT * RING_SPACING) continue;
+    let curve = tunnelCurve(obs.z);
+    let p = project(obs.x + curve.x, obs.y + curve.y, obs.z);
+    let size = p.scale * obs.size;
+    if (size < 1) continue;
+
+    let depthFactor = Math.max(0, 1 - obs.z / (RING_COUNT * RING_SPACING));
+    let alpha = depthFactor;
+
+    ctx.shadowBlur = 15 * depthFactor;
+
+    if (obs.type === 'hexagon') {
+      ctx.shadowColor = PINK;
+      ctx.strokeStyle = `rgba(255, 48, 128, ${alpha})`;
+      ctx.fillStyle = `rgba(255, 48, 128, ${alpha * 0.15})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i <= 6; i++) {
+        let a = (i / 6) * Math.PI * 2 + obs.rot;
+        let hx = p.x + Math.cos(a) * size;
+        let hy = p.y + Math.sin(a) * size;
+        if (i === 0) ctx.moveTo(hx, hy);
+        else ctx.lineTo(hx, hy);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (obs.type === 'triangle') {
+      ctx.shadowColor = '#ff6040';
+      ctx.strokeStyle = `rgba(255, 96, 64, ${alpha})`;
+      ctx.fillStyle = `rgba(255, 96, 64, ${alpha * 0.15})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i <= 3; i++) {
+        let a = (i / 3) * Math.PI * 2 + obs.rot - Math.PI / 2;
+        let tx = p.x + Math.cos(a) * size * 1.2;
+        let ty = p.y + Math.sin(a) * size * 1.2;
+        if (i === 0) ctx.moveTo(tx, ty);
+        else ctx.lineTo(tx, ty);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (obs.type === 'bar') {
+      ctx.shadowColor = PINK;
+      ctx.strokeStyle = `rgba(255, 48, 128, ${alpha})`;
+      ctx.fillStyle = `rgba(255, 48, 128, ${alpha * 0.12})`;
+      ctx.lineWidth = 2;
+      let bw = size * 3;
+      let bh = size * 0.4;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(obs.rot);
+      ctx.fillRect(-bw/2, -bh/2, bw, bh);
+      ctx.strokeRect(-bw/2, -bh/2, bw, bh);
+      ctx.restore();
+    }
+  }
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawOrbs() {
+  ctx.save();
+  for (let orb of orbs) {
+    if (orb.z <= 0 || orb.z > RING_COUNT * RING_SPACING) continue;
+    let curve = tunnelCurve(orb.z);
+    let p = project(orb.x + curve.x, orb.y + curve.y, orb.z);
+    let size = p.scale * 0.3;
+    if (size < 1) continue;
+
+    let depthFactor = Math.max(0, 1 - orb.z / (RING_COUNT * RING_SPACING));
+    let pulse = 1 + 0.3 * Math.sin(colorShift * 5 + orb.phase);
+
+    // Outer glow
+    ctx.shadowBlur = 25 * depthFactor;
+    ctx.shadowColor = GOLD;
+    ctx.globalCompositeOperation = 'lighter';
+
+    let grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, size * 2 * pulse);
+    grad.addColorStop(0, `rgba(255, 215, 0, ${depthFactor * 0.9})`);
+    grad.addColorStop(0.5, `rgba(255, 180, 0, ${depthFactor * 0.4})`);
+    grad.addColorStop(1, `rgba(255, 150, 0, 0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, size * 2 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Core
+    ctx.fillStyle = `rgba(255, 255, 200, ${depthFactor})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, size * 0.6 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawParticles() {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let p of particles) {
+    let alpha = p.life / p.maxLife;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = p.color;
+    ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba');
+    if (p.color.startsWith('#')) {
+      let r = parseInt(p.color.slice(1,3),16);
+      let g = parseInt(p.color.slice(3,5),16);
+      let b = parseInt(p.color.slice(5,7),16);
+      ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+    }
+    ctx.beginPath();
+    ctx.arc(p.sx, p.sy, p.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawShip() {
+  ctx.save();
+  let curve = tunnelCurve(0);
+  let shipScreenX = cx + (playerX * 2.5 + curve.x) * 500 / 5 + shakeX;
+  let shipScreenY = cy + (playerY * 1.5 + curve.y) * 500 / 5 + shakeY;
+  let shipSize = 12 * devicePixelRatio;
+
+  // Engine glow
+  ctx.globalCompositeOperation = 'lighter';
+  let glowGrad = ctx.createRadialGradient(shipScreenX, shipScreenY + shipSize, 0, shipScreenX, shipScreenY + shipSize, shipSize * 3);
+  glowGrad.addColorStop(0, 'rgba(0, 240, 255, 0.5)');
+  glowGrad.addColorStop(0.5, 'rgba(96, 64, 204, 0.2)');
+  glowGrad.addColorStop(1, 'rgba(96, 64, 204, 0)');
+  ctx.fillStyle = glowGrad;
+  ctx.beginPath();
+  ctx.arc(shipScreenX, shipScreenY + shipSize, shipSize * 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Ship body
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = CYAN;
+  ctx.strokeStyle = CYAN;
+  ctx.fillStyle = 'rgba(0, 240, 255, 0.15)';
+  ctx.lineWidth = 2 * devicePixelRatio;
+  ctx.beginPath();
+  ctx.moveTo(shipScreenX, shipScreenY - shipSize);
+  ctx.lineTo(shipScreenX - shipSize * 0.8, shipScreenY + shipSize * 0.6);
+  ctx.lineTo(shipScreenX, shipScreenY + shipSize * 0.3);
+  ctx.lineTo(shipScreenX + shipSize * 0.8, shipScreenY + shipSize * 0.6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Cockpit
+  ctx.fillStyle = `rgba(0, 240, 255, 0.6)`;
+  ctx.beginPath();
+  ctx.arc(shipScreenX, shipScreenY - shipSize * 0.1, shipSize * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawVignette() {
+  let grad = ctx.createRadialGradient(cx, cy, H * 0.3, cx, cy, H * 0.9);
+  grad.addColorStop(0, 'rgba(6, 6, 18, 0)');
+  grad.addColorStop(1, 'rgba(6, 6, 18, 0.7)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawCenterGlow() {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  let grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, H * 0.15);
+  grad.addColorStop(0, `rgba(96, 64, 204, ${0.08 + 0.04 * Math.sin(colorShift * 2)})`);
+  grad.addColorStop(1, 'rgba(96, 64, 204, 0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, H * 0.15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+}
+
+// Speed boost flash
+function drawSpeedBoost() {
+  if (speedBoostTimer > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    let alpha = Math.min(0.15, speedBoostTimer * 0.3);
+    ctx.fillStyle = `rgba(255, 215, 0, ${alpha})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+  }
+}
+
+// --- HUD ---
+function updateHUD() {
+  if (state === 'playing') {
+    let hearts = '';
+    for (let i = 0; i < 3; i++) {
+      hearts += i < lives ? '❤️' : '🖤';
+    }
+    livesEl.textContent = hearts;
+    scoreEl.innerHTML = `SCORE ${Math.floor(score)}<br><span style="font-size:12px;color:#6040cc">HI ${Math.floor(Math.max(score, highScore))}</span>`;
+  } else {
+    livesEl.textContent = '';
+    scoreEl.textContent = '';
+  }
+}
+
+// --- SCREENS ---
+function drawStartScreen() {
+  ctx.save();
+  // Title
+  let pulse = 1 + 0.05 * Math.sin(colorShift * 3);
+  let titleSize = Math.min(W * 0.1, 72 * devicePixelRatio) * pulse;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Title glow layers
+  ctx.shadowBlur = 40;
+  ctx.shadowColor = PURPLE;
+  ctx.font = `bold ${titleSize}px 'Courier New', monospace`;
+  ctx.fillStyle = PURPLE;
+  ctx.fillText('WARP DRIVE', cx, cy - H * 0.12);
+
+  ctx.shadowBlur = 20;
+  ctx.shadowColor = CYAN;
+  ctx.fillStyle = CYAN;
+  ctx.fillText('WARP DRIVE', cx, cy - H * 0.12);
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#fff';
+  ctx.fillText('WARP DRIVE', cx, cy - H * 0.12);
+
+  // Subtitle
+  let subAlpha = 0.5 + 0.5 * Math.sin(colorShift * 4);
+  ctx.font = `${16 * devicePixelRatio}px 'Courier New', monospace`;
+  ctx.fillStyle = `rgba(0, 240, 255, ${subAlpha})`;
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = CYAN;
+  ctx.fillText('PRESS ENTER / TAP TO START', cx, cy + H * 0.06);
+
+  // High score
+  if (highScore > 0) {
+    ctx.shadowBlur = 0;
+    ctx.font = `${12 * devicePixelRatio}px 'Courier New', monospace`;
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.6)';
+    ctx.fillText(`HIGH SCORE: ${Math.floor(highScore)}`, cx, cy + H * 0.14);
+  }
+
+  // Emoji
+  ctx.font = `${40 * devicePixelRatio}px serif`;
+  ctx.shadowBlur = 0;
+  ctx.fillText('🚀', cx, cy - H * 0.22);
+
+  ctx.restore();
+}
+
+function drawGameOverScreen() {
+  ctx.save();
+  // Dim overlay
+  ctx.fillStyle = 'rgba(6, 6, 18, 0.75)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // GAME OVER
+  ctx.shadowBlur = 30;
+  ctx.shadowColor = PINK;
+  ctx.font = `bold ${Math.min(W * 0.08, 56 * devicePixelRatio)}px 'Courier New', monospace`;
+  ctx.fillStyle = PINK;
+  ctx.fillText('GAME OVER', cx, cy - H * 0.12);
+
+  ctx.shadowBlur = 0;
+  ctx.font = `${20 * devicePixelRatio}px 'Courier New', monospace`;
+  ctx.fillStyle = CYAN;
+  ctx.fillText(`SCORE: ${Math.floor(score)}`, cx, cy + H * 0.01);
+
+  ctx.fillStyle = GOLD;
+  ctx.font = `${14 * devicePixelRatio}px 'Courier New', monospace`;
+  ctx.fillText(`HIGH SCORE: ${Math.floor(highScore)}`, cx, cy + H * 0.07);
+
+  if (score >= highScore && score > 0) {
+    ctx.fillStyle = GOLD;
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = GOLD;
+    ctx.font = `${14 * devicePixelRatio}px 'Courier New', monospace`;
+    ctx.fillText('★ NEW HIGH SCORE ★', cx, cy + H * 0.12);
+    ctx.shadowBlur = 0;
+  }
+
+  let blink = 0.5 + 0.5 * Math.sin(colorShift * 4);
+  ctx.fillStyle = `rgba(0, 240, 255, ${blink})`;
+  ctx.font = `${16 * devicePixelRatio}px 'Courier New', monospace`;
+  ctx.fillText('PRESS ENTER / TAP TO PLAY AGAIN', cx, cy + H * 0.2);
+
+  ctx.restore();
+}
+
+// --- SPAWNING ---
+let spawnTimer = 0;
+let orbSpawnTimer = 0;
+
+function spawnObstacle() {
+  let types = ['hexagon', 'triangle', 'bar'];
+  let type = types[Math.floor(Math.random() * types.length)];
+  let angle = Math.random() * Math.PI * 2;
+  let dist = 0.5 + Math.random() * 2;
+  obstacles.push({
+    x: Math.cos(angle) * dist,
+    y: Math.sin(angle) * dist * 0.7,
+    z: RING_COUNT * RING_SPACING,
+    type: type,
+    size: 0.3 + Math.random() * 0.4,
+    rot: Math.random() * Math.PI * 2,
+    rotSpeed: (Math.random() - 0.5) * 2
+  });
+}
+
+function spawnOrb() {
+  let angle = Math.random() * Math.PI * 2;
+  let dist = 0.3 + Math.random() * 1.5;
+  orbs.push({
+    x: Math.cos(angle) * dist,
+    y: Math.sin(angle) * dist * 0.7,
+    z: RING_COUNT * RING_SPACING,
+    phase: Math.random() * Math.PI * 2
+  });
+}
+
+function spawnParticles(sx, sy, color, count) {
+  for (let i = 0; i < count; i++) {
+    let angle = Math.random() * Math.PI * 2;
+    let sp = 1 + Math.random() * 4;
+    particles.push({
+      sx: sx,
+      sy: sy,
+      vx: Math.cos(angle) * sp * devicePixelRatio,
+      vy: Math.sin(angle) * sp * devicePixelRatio,
+      life: 0.5 + Math.random() * 0.5,
+      maxLife: 0.5 + Math.random() * 0.5,
+      size: (2 + Math.random() * 3) * devicePixelRatio,
+      color: color
+    });
+  }
+}
+
+// --- COLLISION ---
+function checkCollisions() {
+  let playerWorldX = playerX * 2.5;
+  let playerWorldY = playerY * 1.5;
+  let hitRadius = 0.35;
+  let collectRadius = 0.6;
+
+  // Obstacles
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    let obs = obstacles[i];
+    if (obs.z > 5 || obs.z < -2) continue;
+    let dx = obs.x - playerWorldX;
+    let dy = obs.y - playerWorldY;
+    let dist = Math.sqrt(dx * dx + dy * dy);
+    let obsRadius = obs.size * (obs.type === 'bar' ? 1.5 : 1);
+    if (dist < hitRadius + obsRadius) {
+      // Hit!
+      lives--;
+      shakeX = (Math.random() - 0.5) * 30 * devicePixelRatio;
+      shakeY = (Math.random() - 0.5) * 30 * devicePixelRatio;
+      shakeDecay = 0.4;
+
+      let curve = tunnelCurve(obs.z);
+      let p = project(obs.x + curve.x, obs.y + curve.y, Math.max(obs.z, 1));
+      spawnParticles(p.x, p.y, PINK, 20);
+
+      obstacles.splice(i, 1);
+
+      if (lives <= 0) {
+        state = 'gameover';
+        if (score > highScore) {
+          highScore = score;
+          localStorage.setItem('warpDriveHigh', Math.floor(highScore));
+        }
+      }
+      break;
+    }
+  }
+
+  // Orbs
+  for (let i = orbs.length - 1; i >= 0; i--) {
+    let orb = orbs[i];
+    if (orb.z > 8 || orb.z < -2) continue;
+    let dx = orb.x - playerWorldX;
+    let dy = orb.y - playerWorldY;
+    let dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < collectRadius) {
+      // Collect!
+      score += 50;
+      energyCollected++;
+      speedBoostTimer = 0.5;
+      speed += 0.15;
+
+      let curve = tunnelCurve(orb.z);
+      let p = project(orb.x + curve.x, orb.y + curve.y, Math.max(orb.z, 1));
+      spawnParticles(p.x, p.y, GOLD, 15);
+
+      orbs.splice(i, 1);
+    }
+  }
+}
+
+// --- UPDATE ---
+function update() {
+  if (state !== 'playing') return;
+
+  // Input
+  let moveSpeed = 3 * dt;
+  if (keys['ArrowLeft'] || keys['a']) targetPlayerX -= moveSpeed;
+  if (keys['ArrowRight'] || keys['d']) targetPlayerX += moveSpeed;
+  if (keys['ArrowUp'] || keys['w']) targetPlayerY -= moveSpeed * 0.6;
+  if (keys['ArrowDown'] || keys['s']) targetPlayerY += moveSpeed * 0.6;
+
+  // Touch controls
+  if (touchStartX !== null && touchCurrentX !== null) {
+    let dx = (touchCurrentX - touchStartX) / (window.innerWidth * 0.3);
+    let dy = (touchCurrentY - touchStartY) / (window.innerHeight * 0.3);
+    targetPlayerX = Math.max(-1, Math.min(1, dx));
+    targetPlayerY = Math.max(-0.6, Math.min(0.6, dy));
+  }
+
+  // Mouse control
+  if (useMouseControl && mouseX !== null) {
+    targetPlayerX = (mouseX / window.innerWidth - 0.5) * 2;
+    targetPlayerY = (mouseY / window.innerHeight - 0.5) * 1.2;
+  }
+
+  targetPlayerX = Math.max(-1, Math.min(1, targetPlayerX));
+  targetPlayerY = Math.max(-0.6, Math.min(0.6, targetPlayerY));
+
+  // Smooth movement
+  playerX += (targetPlayerX - playerX) * Math.min(1, 10 * dt);
+  playerY += (targetPlayerY - playerY) * Math.min(1, 10 * dt);
+
+  // Speed increase
+  speed += 0.08 * dt;
+  if (speedBoostTimer > 0) {
+    speedBoostTimer -= dt;
+  }
+
+  let currentSpeed = speed + (speedBoostTimer > 0 ? 2 : 0);
+
+  // Distance and score
+  distance += currentSpeed * dt;
+  score += currentSpeed * dt * 10;
+  colorShift += dt;
+
+  // Move rings
+  tunnelOffset += currentSpeed * dt;
+  for (let ring of rings) {
+    ring.z -= currentSpeed * RING_SPACING * 0.1;
+    if (ring.z <= -RING_SPACING) {
+      ring.z += RING_COUNT * RING_SPACING;
+    }
+  }
+
+  // Move obstacles
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    obstacles[i].z -= currentSpeed * 15 * dt;
+    obstacles[i].rot += obstacles[i].rotSpeed * dt;
+    if (obstacles[i].z < -10) obstacles.splice(i, 1);
+  }
+
+  // Move orbs
+  for (let i = orbs.length - 1; i >= 0; i--) {
+    orbs[i].z -= currentSpeed * 15 * dt;
+    if (orbs[i].z < -10) orbs.splice(i, 1);
+  }
+
+  // Spawn
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    spawnTimer = Math.max(0.3, 1.5 - speed * 0.05);
+    spawnObstacle();
+  }
+  orbSpawnTimer -= dt;
+  if (orbSpawnTimer <= 0) {
+    orbSpawnTimer = 1.5 + Math.random() * 2;
+    spawnOrb();
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    let p = particles[i];
+    p.sx += p.vx * dt * 60;
+    p.sy += p.vy * dt * 60;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Shake decay
+  if (shakeDecay > 0) {
+    shakeDecay -= dt;
+    shakeX *= 0.85;
+    shakeY *= 0.85;
+  } else {
+    shakeX = 0;
+    shakeY = 0;
+  }
+
+  checkCollisions();
+  updateHUD();
+}
+
+// --- MAIN LOOP ---
+function frame(time) {
+  requestAnimationFrame(frame);
+
+  if (!lastTime) { lastTime = time; return; }
+  dt = Math.min(0.05, (time - lastTime) / 1000);
+  lastTime = time;
+
+  // Clear
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  if (state === 'start') {
+    colorShift += dt;
+    // Animate background tunnel
+    for (let ring of rings) {
+      ring.z -= 2 * RING_SPACING * 0.1 * dt;
+      if (ring.z <= -RING_SPACING) ring.z += RING_COUNT * RING_SPACING;
+    }
+    drawStarStreaks();
+    drawTunnel();
+    drawCenterGlow();
+    drawVignette();
+    drawStartScreen();
+  } else if (state === 'playing') {
+    update();
+    drawStarStreaks();
+    drawTunnel();
+    drawCenterGlow();
+    drawObstacles();
+    drawOrbs();
+    drawShip();
+    drawParticles();
+    drawSpeedBoost();
+    drawVignette();
+  } else if (state === 'gameover') {
+    colorShift += dt;
+    // Keep tunnel running slowly
+    for (let ring of rings) {
+      ring.z -= 1 * RING_SPACING * 0.1 * dt;
+      if (ring.z <= -RING_SPACING) ring.z += RING_COUNT * RING_SPACING;
+    }
+    drawStarStreaks();
+    drawTunnel();
+    drawCenterGlow();
+    drawVignette();
+    drawGameOverScreen();
+  }
+}
+
+// --- INPUT ---
+window.addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+  if (e.key === 'Enter' || e.key === ' ') {
+    if (state === 'start' || state === 'gameover') {
+      initGame();
+      state = 'playing';
+    }
+  }
+});
+window.addEventListener('keyup', (e) => { keys[e.key] = false; });
+
+// Touch
+window.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (state === 'start' || state === 'gameover') {
+    initGame();
+    state = 'playing';
+    return;
+  }
+  let t = e.touches[0];
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+  touchCurrentX = t.clientX;
+  touchCurrentY = t.clientY;
+}, { passive: false });
+
+window.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (e.touches.length > 0) {
+    touchCurrentX = e.touches[0].clientX;
+    touchCurrentY = e.touches[0].clientY;
+  }
+}, { passive: false });
+
+window.addEventListener('touchend', (e) => {
+  touchStartX = null;
+  touchCurrentX = null;
+  targetPlayerX = 0;
+  targetPlayerY = 0;
+});
+
+// Mouse
+window.addEventListener('mousedown', (e) => {
+  if (state === 'start' || state === 'gameover') {
+    initGame();
+    state = 'playing';
+    return;
+  }
+  useMouseControl = true;
+  mouseX = e.clientX;
+  mouseY = e.clientY;
+});
+window.addEventListener('mousemove', (e) => {
+  if (useMouseControl) {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+  }
+});
+window.addEventListener('mouseup', () => {
+  useMouseControl = false;
+  mouseX = null;
+  targetPlayerX = 0;
+  targetPlayerY = 0;
+});
+
+// Resize
+window.addEventListener('resize', resize);
+
+// Init
+resize();
+initGame();
+state = 'start';
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
