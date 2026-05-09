@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Synthwave Surfer — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0014;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #ff2975;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  transition: color 0.2s;
+}
+.back-link:hover { color: #00d4ff; }
+
+.hud {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 600px;
+  padding: 40px 16px 8px;
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  z-index: 10;
+}
+.hud-score { color: #00d4ff; }
+.hud-speed { color: #f7e026; }
+.hud-best { color: #ff2975; }
+
+canvas {
+  display: block;
+  border-radius: 4px;
+  touch-action: none;
+}
+
+.overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 0, 20, 0.85);
+  z-index: 50;
+  transition: opacity 0.3s;
+}
+.overlay.hidden { opacity: 0; pointer-events: none; }
+
+.title {
+  font-size: 2.2rem;
+  font-weight: bold;
+  background: linear-gradient(90deg, #ff2975, #f7e026, #00d4ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 12px;
+  text-align: center;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.subtitle {
+  color: #b060ff;
+  font-size: 0.85rem;
+  margin-bottom: 24px;
+  letter-spacing: 0.1em;
+}
+.start-btn {
+  background: linear-gradient(135deg, #ff2975, #b060ff);
+  border: none;
+  color: #fff;
+  padding: 14px 48px;
+  font-size: 1rem;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 0 30px rgba(255, 41, 117, 0.4);
+}
+.start-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 50px rgba(255, 41, 117, 0.6);
+}
+
+.game-over-score {
+  font-size: 1.5rem;
+  color: #00d4ff;
+  margin-bottom: 20px;
+}
+
+.controls-hint {
+  color: #664488;
+  font-size: 0.7rem;
+  margin-top: 16px;
+  letter-spacing: 0.08em;
+}
+</style>
+</head>
+<body>
+
+<a class="back-link" href="/">← Arcade</a>
+
+<div class="hud">
+  <span class="hud-score">Score: <span id="score">0</span></span>
+  <span class="hud-speed">×<span id="speed">1.0</span></span>
+  <span class="hud-best">Best: <span id="best">0</span></span>
+</div>
+
+<canvas id="game"></canvas>
+
+<div class="overlay" id="startOverlay">
+  <div class="title">Synthwave Surfer</div>
+  <div class="subtitle">ride the neon grid</div>
+  <button class="start-btn" id="startBtn">Surf</button>
+  <div class="controls-hint">← → or swipe to move · dodge obstacles · collect gems</div>
+</div>
+
+<div class="overlay hidden" id="overOverlay">
+  <div class="title" style="font-size:1.6rem">Game Over</div>
+  <div class="game-over-score">Score: <span id="finalScore">0</span></div>
+  <button class="start-btn" id="restartBtn">Again</button>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// --- Sizing ---
+function resize() {
+  const maxW = Math.min(600, window.innerWidth);
+  const maxH = window.innerHeight - 80;
+  canvas.width = maxW;
+  canvas.height = maxH;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- State ---
+let playing = false;
+let score = 0;
+let bestScore = parseInt(localStorage.getItem('synthwave-best') || '0');
+let speed = 1;
+let playerX = 0.5; // 0..1
+let targetX = 0.5;
+let gridOffset = 0;
+let obstacles = [];
+let gems = [];
+let particles = [];
+let shakeTimer = 0;
+let frameCount = 0;
+
+document.getElementById('best').textContent = bestScore;
+
+// --- Grid rendering (3D perspective) ---
+const HORIZON = 0.32;
+const GRID_LINES = 20;
+const GRID_COLS = 14;
+const SUN_COLORS = ['#ff2975', '#f7e026', '#ff6b35', '#b060ff'];
+
+function drawSky() {
+  const hY = canvas.height * HORIZON;
+  // gradient sky
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, hY);
+  skyGrad.addColorStop(0, '#0a0014');
+  skyGrad.addColorStop(0.5, '#1a0033');
+  skyGrad.addColorStop(1, '#2a0044');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, canvas.width, hY);
+
+  // sun
+  const sunR = canvas.width * 0.12;
+  const sunX = canvas.width * 0.5;
+  const sunY = hY - sunR * 0.3;
+  const sunGrad = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR);
+  sunGrad.addColorStop(0, '#f7e026');
+  sunGrad.addColorStop(0.3, '#ff6b35');
+  sunGrad.addColorStop(0.7, '#ff2975');
+  sunGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = sunGrad;
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // sun stripes (horizontal lines through sun)
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.fillStyle = '#2a0044';
+  for (let i = 0; i < 6; i++) {
+    const y = sunY - sunR + sunR * 0.5 + i * sunR * 0.18;
+    const h = 2 + i * 1.5;
+    ctx.fillRect(sunX - sunR, y, sunR * 2, h);
+  }
+  ctx.restore();
+
+  // stars
+  ctx.fillStyle = '#ffffff';
+  const rng = mulberry32(42);
+  for (let i = 0; i < 60; i++) {
+    const sx = rng() * canvas.width;
+    const sy = rng() * hY * 0.75;
+    const sr = 0.5 + rng() * 1.2;
+    const twinkle = 0.4 + 0.6 * Math.sin(frameCount * 0.03 + i * 1.7);
+    ctx.globalAlpha = twinkle;
+    ctx.fillRect(sx, sy, sr, sr);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = t + Math.imul(t ^ (t >>> 7), 61 | t) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function projectY(z) {
+  // z: 0=near, 1=horizon
+  const hY = canvas.height * HORIZON;
+  const bY = canvas.height;
+  return hY + (bY - hY) * (1 - z);
+}
+
+function projectX(x, z) {
+  // x: 0..1, z: 0..1
+  const cx = canvas.width * 0.5;
+  const spread = canvas.width * (0.6 + 0.8 * (1 - z));
+  return cx + (x - 0.5) * spread;
+}
+
+function drawGrid() {
+  const hY = canvas.height * HORIZON;
+
+  // ground gradient
+  const gndGrad = ctx.createLinearGradient(0, hY, 0, canvas.height);
+  gndGrad.addColorStop(0, '#1a0033');
+  gndGrad.addColorStop(1, '#0a0014');
+  ctx.fillStyle = gndGrad;
+  ctx.fillRect(0, hY, canvas.width, canvas.height - hY);
+
+  // horizontal grid lines
+  ctx.strokeStyle = '#b060ff';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < GRID_LINES; i++) {
+    let z = (i + gridOffset % 1) / GRID_LINES;
+    const y = projectY(z);
+    const alpha = 0.1 + 0.4 * (1 - z);
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(projectX(0, z), y);
+    ctx.lineTo(projectX(1, z), y);
+    ctx.stroke();
+  }
+
+  // vertical grid lines
+  for (let i = 0; i <= GRID_COLS; i++) {
+    const x = i / GRID_COLS;
+    ctx.globalAlpha = 0.25;
+    ctx.beginPath();
+    ctx.moveTo(projectX(x, 0.98), projectY(0.98));
+    ctx.lineTo(projectX(x, 0), projectY(0));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // glow line at horizon
+  ctx.strokeStyle = '#ff2975';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#ff2975';
+  ctx.shadowBlur = 20;
+  ctx.beginPath();
+  ctx.moveTo(0, hY);
+  ctx.lineTo(canvas.width, hY);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+// --- Obstacles & Gems ---
+function spawnObstacle() {
+  const lane = Math.random();
+  obstacles.push({ x: lane, z: 1, w: 0.08 + Math.random() * 0.06 });
+}
+
+function spawnGem() {
+  const lane = Math.random();
+  gems.push({ x: lane, z: 1, collected: false, sparkle: 0 });
+}
+
+function drawObstacles() {
+  for (const o of obstacles) {
+    const sz = 14 + 30 * (1 - o.z);
+    const px = projectX(o.x, o.z);
+    const py = projectY(o.z);
+    const alpha = 0.3 + 0.7 * (1 - o.z);
+    ctx.globalAlpha = alpha;
+
+    // glowing block
+    ctx.shadowColor = '#ff2975';
+    ctx.shadowBlur = 15 * (1 - o.z);
+    ctx.fillStyle = '#ff2975';
+    ctx.fillRect(px - sz * o.w / 0.08, py - sz * 0.6, sz * 2 * o.w / 0.08, sz * 0.6);
+
+    // top face
+    ctx.fillStyle = '#ff6b9d';
+    ctx.fillRect(px - sz * o.w / 0.08, py - sz * 0.9, sz * 2 * o.w / 0.08, sz * 0.3);
+
+    ctx.shadowBlur = 0;
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawGems() {
+  for (const g of gems) {
+    if (g.collected) continue;
+    const sz = 6 + 12 * (1 - g.z);
+    const px = projectX(g.x, g.z);
+    const py = projectY(g.z);
+    const alpha = 0.4 + 0.6 * (1 - g.z);
+    const rot = frameCount * 0.05;
+
+    ctx.globalAlpha = alpha;
+    ctx.save();
+    ctx.translate(px, py - sz);
+
+    // diamond shape
+    ctx.shadowColor = '#00d4ff';
+    ctx.shadowBlur = 20 * (1 - g.z);
+    ctx.fillStyle = '#00d4ff';
+    ctx.beginPath();
+    ctx.moveTo(0, -sz);
+    ctx.lineTo(sz * 0.6 * Math.cos(rot), 0);
+    ctx.lineTo(0, sz * 0.5);
+    ctx.lineTo(-sz * 0.6 * Math.cos(rot), 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // highlight
+    ctx.fillStyle = '#ffffff';
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -sz * 0.7);
+    ctx.lineTo(sz * 0.2, -sz * 0.1);
+    ctx.lineTo(-sz * 0.15, -sz * 0.2);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// --- Player ---
+function drawPlayer() {
+  const pz = 0.08;
+  const px = projectX(playerX, pz);
+  const py = projectY(pz);
+  const sz = 22;
+
+  // glow
+  ctx.shadowColor = '#00d4ff';
+  ctx.shadowBlur = 30;
+
+  // triangle ship
+  ctx.fillStyle = '#00d4ff';
+  ctx.beginPath();
+  ctx.moveTo(px, py - sz * 1.4);
+  ctx.lineTo(px + sz, py);
+  ctx.lineTo(px + sz * 0.3, py - sz * 0.3);
+  ctx.lineTo(px - sz * 0.3, py - sz * 0.3);
+  ctx.lineTo(px - sz, py);
+  ctx.closePath();
+  ctx.fill();
+
+  // cockpit
+  ctx.fillStyle = '#f7e026';
+  ctx.beginPath();
+  ctx.arc(px, py - sz * 0.7, sz * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // engine trails
+  ctx.shadowColor = '#ff2975';
+  ctx.shadowBlur = 20;
+  const trailWave = Math.sin(frameCount * 0.3) * 3;
+  ctx.strokeStyle = '#ff2975';
+  ctx.lineWidth = 3;
+  ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  ctx.moveTo(px - sz * 0.5, py);
+  ctx.lineTo(px - sz * 0.5 + trailWave, py + sz * 0.8 + Math.random() * 5);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(px + sz * 0.5, py);
+  ctx.lineTo(px + sz * 0.5 + trailWave, py + sz * 0.8 + Math.random() * 5);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
+// --- Particles ---
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 6,
+      vy: (Math.random() - 0.5) * 6 - 2,
+      life: 1,
+      color,
+      size: 2 + Math.random() * 4
+    });
+  }
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= 0.025;
+    p.size *= 0.97;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
+// --- Collision ---
+function checkCollisions() {
+  const pz = 0.08;
+  const px = playerX;
+
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const o = obstacles[i];
+    if (Math.abs(o.z - pz) < 0.06 && Math.abs(o.x - px) < o.w + 0.04) {
+      // hit!
+      const spx = projectX(px, pz);
+      const spy = projectY(pz);
+      spawnParticles(spx, spy, '#ff2975', 30);
+      spawnParticles(spx, spy, '#f7e026', 15);
+      shakeTimer = 15;
+      return true;
+    }
+  }
+
+  for (const g of gems) {
+    if (!g.collected && Math.abs(g.z - pz) < 0.07 && Math.abs(g.x - px) < 0.06) {
+      g.collected = true;
+      score += 10;
+      document.getElementById('score').textContent = score;
+      const gpx = projectX(g.x, g.z);
+      const gpy = projectY(g.z);
+      spawnParticles(gpx, gpy, '#00d4ff', 20);
+      spawnParticles(gpx, gpy, '#ffffff', 8);
+    }
+  }
+  return false;
+}
+
+// --- Game loop ---
+let lastSpawnObs = 0;
+let lastSpawnGem = 0;
+
+function update() {
+  if (!playing) return;
+
+  frameCount++;
+  const spd = 0.008 * speed;
+
+  // scroll grid
+  gridOffset += spd * 60;
+
+  // move player smoothly
+  playerX += (targetX - playerX) * 0.12;
+
+  // move obstacles & gems
+  for (const o of obstacles) o.z -= spd;
+  for (const g of gems) g.z -= spd;
+
+  // remove off-screen
+  obstacles = obstacles.filter(o => o.z > -0.2);
+  gems = gems.filter(g => g.z > -0.2 && !g.collected);
+
+  // spawn
+  lastSpawnObs++;
+  lastSpawnGem++;
+  const spawnRate = Math.max(30, 70 - speed * 8);
+  if (lastSpawnObs > spawnRate) {
+    spawnObstacle();
+    lastSpawnObs = 0;
+    // sometimes double
+    if (speed > 2 && Math.random() < 0.3) spawnObstacle();
+  }
+  if (lastSpawnGem > 45) {
+    spawnGem();
+    lastSpawnGem = 0;
+  }
+
+  // increase speed over time
+  speed = 1 + frameCount * 0.0003;
+  document.getElementById('speed').textContent = speed.toFixed(1);
+
+  // score by distance
+  if (frameCount % 6 === 0) {
+    score += 1;
+    document.getElementById('score').textContent = score;
+  }
+
+  updateParticles();
+
+  if (shakeTimer > 0) shakeTimer--;
+
+  if (checkCollisions()) {
+    gameOver();
+  }
+}
+
+function draw() {
+  ctx.save();
+
+  // screen shake
+  if (shakeTimer > 0) {
+    const sx = (Math.random() - 0.5) * shakeTimer * 1.5;
+    const sy = (Math.random() - 0.5) * shakeTimer * 1.5;
+    ctx.translate(sx, sy);
+  }
+
+  ctx.clearRect(-10, -10, canvas.width + 20, canvas.height + 20);
+
+  drawSky();
+  drawGrid();
+  drawObstacles();
+  drawGems();
+  if (playing) drawPlayer();
+  drawParticles();
+
+  // scanline effect
+  ctx.fillStyle = 'rgba(0,0,0,0.04)';
+  for (let y = 0; y < canvas.height; y += 3) {
+    ctx.fillRect(0, y, canvas.width, 1);
+  }
+
+  // vignette
+  const vig = ctx.createRadialGradient(
+    canvas.width / 2, canvas.height / 2, canvas.width * 0.3,
+    canvas.width / 2, canvas.height / 2, canvas.width * 0.8
+  );
+  vig.addColorStop(0, 'transparent');
+  vig.addColorStop(1, 'rgba(0,0,0,0.5)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.restore();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// --- Controls ---
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'a') targetX = Math.max(0.08, targetX - 0.08);
+  if (e.key === 'ArrowRight' || e.key === 'd') targetX = Math.min(0.92, targetX + 0.08);
+});
+
+let touchStartX = null;
+canvas.addEventListener('touchstart', e => {
+  touchStartX = e.touches[0].clientX;
+  // tap left/right half
+  const half = canvas.width / 2;
+  if (e.touches[0].clientX < half) targetX = Math.max(0.08, targetX - 0.06);
+  else targetX = Math.min(0.92, targetX + 0.06);
+});
+canvas.addEventListener('touchmove', e => {
+  if (touchStartX !== null) {
+    const dx = e.touches[0].clientX - touchStartX;
+    targetX = Math.max(0.08, Math.min(0.92, targetX + dx * 0.002));
+  }
+  e.preventDefault();
+}, { passive: false });
+canvas.addEventListener('touchend', () => { touchStartX = null; });
+
+// mouse control
+canvas.addEventListener('mousemove', e => {
+  if (playing) {
+    const rect = canvas.getBoundingClientRect();
+    targetX = Math.max(0.08, Math.min(0.92, (e.clientX - rect.left) / rect.width));
+  }
+});
+
+// --- Start / Game Over ---
+function startGame() {
+  score = 0;
+  speed = 1;
+  playerX = 0.5;
+  targetX = 0.5;
+  gridOffset = 0;
+  obstacles = [];
+  gems = [];
+  particles = [];
+  frameCount = 0;
+  lastSpawnObs = 0;
+  lastSpawnGem = 0;
+  shakeTimer = 0;
+  playing = true;
+  document.getElementById('score').textContent = '0';
+  document.getElementById('speed').textContent = '1.0';
+  document.getElementById('startOverlay').classList.add('hidden');
+  document.getElementById('overOverlay').classList.add('hidden');
+}
+
+function gameOver() {
+  playing = false;
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('synthwave-best', bestScore);
+    document.getElementById('best').textContent = bestScore;
+  }
+  document.getElementById('finalScore').textContent = score;
+  setTimeout(() => {
+    document.getElementById('overOverlay').classList.remove('hidden');
+  }, 600);
+}
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('restartBtn').addEventListener('click', startGame);
+
+// start animation even before playing
+loop();
+</script>
+</body>
+</html>
