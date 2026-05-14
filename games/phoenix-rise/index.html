@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Phoenix Rise — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #ff6b35;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+
+canvas {
+  display: block;
+  border-radius: 8px;
+}
+
+#ui-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 50;
+}
+
+#title-screen, #death-screen {
+  text-align: center;
+  pointer-events: auto;
+  animation: fadeIn 0.5s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+#title-screen h1 {
+  font-size: 48px;
+  color: #ff6b35;
+  text-shadow: 0 0 30px #ff4500, 0 0 60px #ff4500aa;
+  margin-bottom: 8px;
+  letter-spacing: 3px;
+}
+
+#title-screen .subtitle {
+  font-size: 14px;
+  color: #ffaa66;
+  margin-bottom: 30px;
+  opacity: 0.8;
+}
+
+.btn {
+  background: linear-gradient(135deg, #ff6b35, #ff4500);
+  border: none;
+  color: #fff;
+  padding: 14px 40px;
+  font-size: 18px;
+  font-family: 'Courier New', monospace;
+  border-radius: 30px;
+  cursor: pointer;
+  letter-spacing: 2px;
+  box-shadow: 0 0 25px #ff450066;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.btn:hover { transform: scale(1.05); box-shadow: 0 0 40px #ff450099; }
+.btn:active { transform: scale(0.97); }
+
+#death-screen h2 {
+  font-size: 36px;
+  color: #ff4500;
+  text-shadow: 0 0 20px #ff450088;
+  margin-bottom: 6px;
+}
+
+#death-screen .score-line {
+  font-size: 22px;
+  color: #ffcc44;
+  margin: 6px 0;
+}
+
+#death-screen .best-line {
+  font-size: 14px;
+  color: #ff9966;
+  margin-bottom: 20px;
+  opacity: 0.7;
+}
+
+#hud {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  font-size: 18px;
+  color: #ffcc44;
+  text-shadow: 0 0 10px #ff660044;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+<canvas id="game"></canvas>
+
+<div id="ui-overlay">
+  <div id="title-screen">
+    <h1>🔥 PHOENIX RISE</h1>
+    <p class="subtitle">Tap to flap · Rise through the burning sky</p>
+    <button class="btn" id="start-btn">IGNITE</button>
+  </div>
+  <div id="death-screen" class="hidden">
+    <h2>ASHES</h2>
+    <div class="score-line" id="final-score">0</div>
+    <div class="best-line" id="best-score">Best: 0</div>
+    <button class="btn" id="retry-btn">RISE AGAIN</button>
+  </div>
+</div>
+
+<div id="hud" class="hidden">
+  <span id="score-display">0</span>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Sizing
+function resize() {
+  const s = Math.min(window.innerWidth, 480);
+  const h = Math.min(window.innerHeight, 800);
+  canvas.width = s;
+  canvas.height = h;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// State
+let state = 'title'; // title | playing | dying | dead
+let score = 0;
+let best = parseInt(localStorage.getItem('phoenix-best') || '0');
+let altitude = 0; // total distance risen
+let phoenix, pipes, particles, stars, feathers;
+let deathTimer = 0;
+let flashAlpha = 0;
+let screenShake = 0;
+
+// Constants
+const GRAVITY = 0.38;
+const FLAP_POWER = -7.2;
+const PIPE_GAP = 155;
+const PIPE_WIDTH = 52;
+const PIPE_SPEED = 2.2;
+const PIPE_INTERVAL = 180;
+
+// Sky gradient transitions from night to dawn to golden
+function getSkyColors(alt) {
+  const t = Math.min(alt / 5000, 1);
+  if (t < 0.3) {
+    // Night → predawn
+    const p = t / 0.3;
+    return [
+      lerpColor('#0a0a2e', '#1a0a3e', p),
+      lerpColor('#050510', '#2a1040', p)
+    ];
+  } else if (t < 0.6) {
+    // Predawn → dawn
+    const p = (t - 0.3) / 0.3;
+    return [
+      lerpColor('#1a0a3e', '#ff6b35', p),
+      lerpColor('#2a1040', '#330a15', p)
+    ];
+  } else {
+    // Dawn → golden
+    const p = (t - 0.6) / 0.4;
+    return [
+      lerpColor('#ff6b35', '#ffcc44', p),
+      lerpColor('#330a15', '#ff4500', p)
+    ];
+  }
+}
+
+function lerpColor(a, b, t) {
+  const ah = parseInt(a.slice(1), 16), bh = parseInt(b.slice(1), 16);
+  const ar = (ah >> 16) & 0xff, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
+  const br = (bh >> 16) & 0xff, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const b2 = Math.round(ab + (bb - ab) * t);
+  return `rgb(${r},${g},${b2})`;
+}
+
+// Phoenix bird
+function createPhoenix() {
+  return {
+    x: canvas.width * 0.3,
+    y: canvas.height * 0.5,
+    vy: 0,
+    rotation: 0,
+    wingPhase: 0,
+    trailTimer: 0,
+    size: 18,
+    alive: true
+  };
+}
+
+// Stars (parallax background)
+function createStars() {
+  const s = [];
+  for (let i = 0; i < 80; i++) {
+    s.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      size: Math.random() * 2 + 0.5,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.3 + 0.1
+    });
+  }
+  return s;
+}
+
+function init() {
+  phoenix = createPhoenix();
+  pipes = [];
+  particles = [];
+  feathers = [];
+  stars = createStars();
+  score = 0;
+  altitude = 0;
+  deathTimer = 0;
+  flashAlpha = 0;
+  screenShake = 0;
+  pipeTimer = 0;
+}
+
+let pipeTimer = 0;
+
+// Pipe creation
+function addPipe() {
+  const minY = 80;
+  const maxY = canvas.height - PIPE_GAP - 80;
+  const gapY = minY + Math.random() * (maxY - minY);
+  pipes.push({
+    x: canvas.width + PIPE_WIDTH,
+    gapY: gapY,
+    scored: false,
+    // decorative glow color
+    hue: 20 + Math.random() * 30
+  });
+}
+
+// Particles
+function emitFlame(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 1;
+    particles.push({
+      x: x + (Math.random() - 0.5) * 10,
+      y: y + (Math.random() - 0.5) * 10,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1,
+      life: 1,
+      decay: 0.02 + Math.random() * 0.03,
+      size: Math.random() * 6 + 2,
+      type: 'flame'
+    });
+  }
+}
+
+function emitTrail(x, y) {
+  for (let i = 0; i < 2; i++) {
+    particles.push({
+      x: x - 8 + (Math.random() - 0.5) * 6,
+      y: y + (Math.random() - 0.5) * 8,
+      vx: -Math.random() * 1.5 - 0.5,
+      vy: (Math.random() - 0.5) * 0.8,
+      life: 1,
+      decay: 0.03 + Math.random() * 0.02,
+      size: Math.random() * 5 + 3,
+      type: 'trail'
+    });
+  }
+}
+
+function emitExplosion(x, y) {
+  for (let i = 0; i < 60; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 8 + 2;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: 0.01 + Math.random() * 0.015,
+      size: Math.random() * 8 + 3,
+      type: 'explosion'
+    });
+  }
+  // Feathers
+  for (let i = 0; i < 15; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 5 + 1;
+    feathers.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      rotation: Math.random() * Math.PI * 2,
+      rotSpeed: (Math.random() - 0.5) * 0.2,
+      life: 1,
+      decay: 0.006 + Math.random() * 0.005,
+      size: Math.random() * 8 + 6
+    });
+  }
+}
+
+// Draw phoenix
+function drawPhoenix(p) {
+  if (!p.alive && deathTimer > 10) return;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(p.rotation);
+
+  const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, p.size * 2.5);
+  glow.addColorStop(0, 'rgba(255, 180, 50, 0.6)');
+  glow.addColorStop(0.5, 'rgba(255, 80, 0, 0.2)');
+  glow.addColorStop(1, 'rgba(255, 50, 0, 0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, p.size * 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body
+  ctx.fillStyle = '#ff6b35';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, p.size, p.size * 0.65, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Inner glow
+  ctx.fillStyle = '#ffcc44';
+  ctx.beginPath();
+  ctx.ellipse(2, -1, p.size * 0.55, p.size * 0.35, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Wing
+  const wingY = Math.sin(p.wingPhase) * 8;
+  ctx.fillStyle = '#ff4500';
+  ctx.beginPath();
+  ctx.moveTo(-4, 0);
+  ctx.quadraticCurveTo(-p.size * 0.8, -p.size + wingY, -p.size * 1.4, wingY - 4);
+  ctx.quadraticCurveTo(-p.size * 0.6, wingY + 4, -4, 4);
+  ctx.fill();
+
+  // Wing tip glow
+  ctx.fillStyle = '#ffaa33';
+  ctx.beginPath();
+  ctx.moveTo(-4, 1);
+  ctx.quadraticCurveTo(-p.size * 0.6, -p.size * 0.5 + wingY, -p.size, wingY);
+  ctx.quadraticCurveTo(-p.size * 0.4, wingY + 2, -4, 3);
+  ctx.fill();
+
+  // Eye
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(p.size * 0.4, -p.size * 0.15, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#111';
+  ctx.beginPath();
+  ctx.arc(p.size * 0.45, -p.size * 0.15, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Beak
+  ctx.fillStyle = '#ffcc00';
+  ctx.beginPath();
+  ctx.moveTo(p.size * 0.7, -2);
+  ctx.lineTo(p.size * 1.2, 1);
+  ctx.lineTo(p.size * 0.7, 4);
+  ctx.closePath();
+  ctx.fill();
+
+  // Tail flames
+  const tailLen = p.size * 1.2;
+  for (let i = 0; i < 3; i++) {
+    const flicker = Math.sin(Date.now() * 0.01 + i * 2) * 4;
+    ctx.fillStyle = i === 0 ? '#ff4500' : i === 1 ? '#ff6b35' : '#ffaa33';
+    ctx.globalAlpha = 0.7 - i * 0.15;
+    ctx.beginPath();
+    ctx.moveTo(-p.size * 0.6, (i - 1) * 3);
+    ctx.quadraticCurveTo(-tailLen - flicker, (i - 1) * 6 + flicker, -tailLen * 1.5 - flicker, (i - 1) * 4);
+    ctx.quadraticCurveTo(-tailLen, (i - 1) * 2, -p.size * 0.6, (i - 1) * 3 + 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+// Draw pipe
+function drawPipe(pipe) {
+  const grad = ctx.createLinearGradient(pipe.x, 0, pipe.x + PIPE_WIDTH, 0);
+  grad.addColorStop(0, `hsl(${pipe.hue}, 80%, 25%)`);
+  grad.addColorStop(0.3, `hsl(${pipe.hue}, 70%, 40%)`);
+  grad.addColorStop(0.7, `hsl(${pipe.hue}, 70%, 35%)`);
+  grad.addColorStop(1, `hsl(${pipe.hue}, 80%, 20%)`);
+
+  // Top pipe
+  ctx.fillStyle = grad;
+  ctx.fillRect(pipe.x, 0, PIPE_WIDTH, pipe.gapY);
+
+  // Bottom pipe
+  ctx.fillRect(pipe.x, pipe.gapY + PIPE_GAP, PIPE_WIDTH, canvas.height - pipe.gapY - PIPE_GAP);
+
+  // Pipe caps
+  const capH = 12;
+  const capW = PIPE_WIDTH + 10;
+  const capX = pipe.x - 5;
+
+  ctx.fillStyle = `hsl(${pipe.hue}, 70%, 45%)`;
+  ctx.fillRect(capX, pipe.gapY - capH, capW, capH);
+  ctx.fillRect(capX, pipe.gapY + PIPE_GAP, capW, capH);
+
+  // Edge glow
+  ctx.shadowColor = `hsl(${pipe.hue}, 100%, 50%)`;
+  ctx.shadowBlur = 15;
+  ctx.strokeStyle = `hsla(${pipe.hue}, 100%, 60%, 0.4)`;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(pipe.x, 0, PIPE_WIDTH, pipe.gapY);
+  ctx.strokeRect(pipe.x, pipe.gapY + PIPE_GAP, PIPE_WIDTH, canvas.height - pipe.gapY - PIPE_GAP);
+  ctx.shadowBlur = 0;
+}
+
+// Draw particles
+function drawParticles() {
+  particles.forEach(p => {
+    let color;
+    if (p.type === 'trail') {
+      const r = 255;
+      const g = Math.floor(100 + p.life * 100);
+      const b = Math.floor(p.life * 50);
+      color = `rgba(${r},${g},${b},${p.life * 0.7})`;
+    } else if (p.type === 'explosion') {
+      const g = Math.floor(50 + p.life * 150);
+      color = `rgba(255,${g},0,${p.life * 0.9})`;
+    } else {
+      const g = Math.floor(80 + p.life * 120);
+      color = `rgba(255,${g},${Math.floor(p.life * 30)},${p.life * 0.6})`;
+    }
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = p.size;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.shadowBlur = 0;
+}
+
+// Draw feathers
+function drawFeathers() {
+  feathers.forEach(f => {
+    ctx.save();
+    ctx.translate(f.x, f.y);
+    ctx.rotate(f.rotation);
+    ctx.globalAlpha = f.life;
+    // Feather shape
+    const grad = ctx.createLinearGradient(-f.size/2, 0, f.size/2, 0);
+    grad.addColorStop(0, '#ff4500');
+    grad.addColorStop(0.5, '#ffaa33');
+    grad.addColorStop(1, '#ff6b35');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, f.size, f.size * 0.25, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Central quill
+    ctx.strokeStyle = '#ffcc44';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-f.size, 0);
+    ctx.lineTo(f.size, 0);
+    ctx.stroke();
+    ctx.restore();
+  });
+  ctx.globalAlpha = 1;
+}
+
+// Draw stars
+function drawStars(alpha) {
+  stars.forEach(s => {
+    const twinkle = 0.4 + Math.sin(s.twinkle) * 0.4;
+    ctx.fillStyle = `rgba(255, 240, 200, ${twinkle * alpha})`;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+// Input
+function flap() {
+  if (state === 'playing' && phoenix.alive) {
+    phoenix.vy = FLAP_POWER;
+    emitFlame(phoenix.x - 8, phoenix.y + 5, 5);
+  }
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  flap();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') {
+    e.preventDefault();
+    flap();
+  }
+});
+
+// Collision
+function checkCollision() {
+  const px = phoenix.x, py = phoenix.y, pr = phoenix.size * 0.6;
+  // Floor/ceiling
+  if (py - pr < 0 || py + pr > canvas.height) return true;
+  // Pipes
+  for (const pipe of pipes) {
+    if (px + pr > pipe.x && px - pr < pipe.x + PIPE_WIDTH) {
+      if (py - pr < pipe.gapY || py + pr > pipe.gapY + PIPE_GAP) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Start game
+function startGame() {
+  init();
+  state = 'playing';
+  document.getElementById('title-screen').classList.add('hidden');
+  document.getElementById('death-screen').classList.add('hidden');
+  document.getElementById('hud').classList.remove('hidden');
+}
+
+function die() {
+  state = 'dying';
+  phoenix.alive = false;
+  emitExplosion(phoenix.x, phoenix.y);
+  flashAlpha = 0.8;
+  screenShake = 15;
+  deathTimer = 0;
+  if (score > best) {
+    best = score;
+    localStorage.setItem('phoenix-best', best);
+  }
+}
+
+function showDeath() {
+  state = 'dead';
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('best-score').textContent = `Best: ${best}`;
+  document.getElementById('death-screen').classList.remove('hidden');
+  document.getElementById('hud').classList.add('hidden');
+}
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('retry-btn').addEventListener('click', startGame);
+
+// Main loop
+function update() {
+  if (state === 'playing') {
+    // Phoenix physics
+    phoenix.vy += GRAVITY;
+    phoenix.y += phoenix.vy;
+    phoenix.rotation = Math.max(-0.5, Math.min(phoenix.vy * 0.06, 1.2));
+    phoenix.wingPhase += phoenix.vy < 0 ? 0.4 : 0.15;
+    phoenix.trailTimer++;
+    altitude += PIPE_SPEED;
+
+    if (phoenix.trailTimer % 2 === 0) {
+      emitTrail(phoenix.x, phoenix.y);
+    }
+
+    // Pipes
+    pipeTimer++;
+    if (pipeTimer >= PIPE_INTERVAL) {
+      addPipe();
+      pipeTimer = 0;
+    }
+
+    pipes.forEach(p => {
+      p.x -= PIPE_SPEED;
+      if (!p.scored && p.x + PIPE_WIDTH < phoenix.x) {
+        p.scored = true;
+        score++;
+        document.getElementById('score-display').textContent = score;
+        // Score flash particle
+        emitFlame(phoenix.x, phoenix.y - 20, 3);
+      }
+    });
+    pipes = pipes.filter(p => p.x > -PIPE_WIDTH - 20);
+
+    if (checkCollision()) die();
+  }
+
+  if (state === 'dying') {
+    deathTimer++;
+    phoenix.vy += GRAVITY * 0.5;
+    phoenix.y += phoenix.vy * 0.3;
+    phoenix.rotation += 0.1;
+    if (deathTimer > 60) showDeath();
+  }
+
+  // Particles
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= p.decay;
+    if (p.type === 'explosion') {
+      p.vx *= 0.96;
+      p.vy *= 0.96;
+      p.vy += 0.05;
+    }
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // Feathers
+  feathers.forEach(f => {
+    f.x += f.vx;
+    f.y += f.vy;
+    f.vy += 0.04;
+    f.vx *= 0.99;
+    f.rotation += f.rotSpeed;
+    f.life -= f.decay;
+  });
+  feathers = feathers.filter(f => f.life > 0);
+
+  // Stars
+  stars.forEach(s => {
+    s.twinkle += 0.03;
+    if (state === 'playing') {
+      s.y += s.speed;
+      if (s.y > canvas.height) { s.y = 0; s.x = Math.random() * canvas.width; }
+    }
+  });
+
+  // Screen effects
+  if (flashAlpha > 0) flashAlpha -= 0.04;
+  if (screenShake > 0) screenShake -= 0.5;
+}
+
+function draw() {
+  const shakeX = screenShake > 0 ? (Math.random() - 0.5) * screenShake : 0;
+  const shakeY = screenShake > 0 ? (Math.random() - 0.5) * screenShake : 0;
+
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  // Sky gradient
+  const skyColors = getSkyColors(altitude);
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  skyGrad.addColorStop(0, skyColors[0]);
+  skyGrad.addColorStop(1, skyColors[1]);
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(-10, -10, canvas.width + 20, canvas.height + 20);
+
+  // Stars fade with altitude
+  const starAlpha = Math.max(0, 1 - altitude / 3000);
+  if (starAlpha > 0) drawStars(starAlpha);
+
+  // Pipes
+  pipes.forEach(drawPipe);
+
+  // Particles behind phoenix
+  drawParticles();
+
+  // Feathers
+  drawFeathers();
+
+  // Phoenix
+  if (state !== 'title') drawPhoenix(phoenix);
+
+  // Flash effect
+  if (flashAlpha > 0) {
+    ctx.fillStyle = `rgba(255, 200, 100, ${flashAlpha})`;
+    ctx.fillRect(-10, -10, canvas.width + 20, canvas.height + 20);
+  }
+
+  ctx.restore();
+}
+
+// Title animation
+let titleFlameTimer = 0;
+function titleUpdate() {
+  titleFlameTimer++;
+  if (titleFlameTimer % 4 === 0) {
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    emitFlame(cx + (Math.random() - 0.5) * 100, cy + (Math.random() - 0.5) * 40, 1);
+  }
+}
+
+function loop() {
+  if (state === 'title') titleUpdate();
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+init();
+loop();
+</script>
+</body>
+</html>
