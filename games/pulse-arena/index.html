@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Pulse Arena — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #05050f;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+
+canvas { display: block; }
+
+#hud {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  text-align: right;
+  z-index: 100;
+  font-size: 14px;
+  line-height: 1.6;
+  text-shadow: 0 0 8px rgba(100,200,255,0.5);
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  background: rgba(5,5,15,0.85);
+  text-align: center;
+  gap: 16px;
+}
+#overlay.hidden { display: none; }
+#overlay h1 {
+  font-size: 42px;
+  letter-spacing: 4px;
+  background: linear-gradient(135deg, #00d4ff, #a855f7, #ff6b9d);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: none;
+}
+#overlay .subtitle {
+  font-size: 14px;
+  color: #8888aa;
+  margin-bottom: 8px;
+}
+#overlay .score-display {
+  font-size: 20px;
+  color: #a855f7;
+}
+#overlay .prompt {
+  font-size: 16px;
+  color: #66ddff;
+  animation: blink 1.5s infinite;
+}
+@keyframes blink {
+  0%,100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← arcade</a>
+<div id="hud">
+  <div>SCORE <span id="score">0</span></div>
+  <div>COMBO <span id="combo">×1</span></div>
+  <div>BEST <span id="best">0</span></div>
+</div>
+
+<div id="overlay">
+  <h1>PULSE ARENA</h1>
+  <div class="subtitle">orbit · jump · survive</div>
+  <div class="prompt">tap or press space to start</div>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const scoreEl = document.getElementById('score');
+const comboEl = document.getElementById('combo');
+const bestEl = document.getElementById('best');
+
+let W, H, cx, cy, arenaR;
+let state = 'menu'; // menu, play, dead
+let bestScore = +(localStorage.getItem('pulseArena_best') || 0);
+bestEl.textContent = bestScore;
+
+// Player
+let player = { angle: 0, radius: 0, jumping: false, jumpT: 0, jumpDur: 0.35, trail: [] };
+const PLAYER_SPEED = 1.8; // radians/sec
+const PLAYER_SIZE = 10;
+const JUMP_HEIGHT = 55;
+const ORBIT_OFFSET = 30; // distance from arena edge when on ground
+
+// Pulses
+let pulses = [];
+let spawnTimer = 0;
+let spawnInterval = 2.0;
+let difficulty = 0;
+let score = 0;
+let combo = 1;
+let maxCombo = 1;
+let shakeT = 0;
+let time = 0;
+let particles = [];
+let bgStars = [];
+
+// Audio (web audio synth)
+let audioCtx;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playTone(freq, dur, vol = 0.1, type = 'sine') {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + dur);
+}
+function playJump() { playTone(440, 0.15, 0.08, 'triangle'); playTone(660, 0.15, 0.05, 'sine'); }
+function playDodge() { playTone(880 + combo * 40, 0.2, 0.06, 'sine'); }
+function playHit() { playTone(120, 0.4, 0.15, 'sawtooth'); playTone(80, 0.5, 0.1, 'square'); }
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  cx = W / 2;
+  cy = H / 2;
+  arenaR = Math.min(W, H) * 0.3;
+  // Generate background stars
+  bgStars = [];
+  for (let i = 0; i < 120; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.5 + 0.3,
+      speed: Math.random() * 0.3 + 0.05,
+      brightness: Math.random()
+    });
+  }
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Input
+let jumpPressed = false;
+let moveDir = 0; // -1 left, 0 none, 1 right
+let keys = {};
+
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (state === 'menu' || state === 'dead') startGame();
+    else if (!player.jumping) jump();
+  }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (state === 'menu' || state === 'dead') startGame();
+  else if (!player.jumping) jump();
+});
+
+overlay.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (state === 'menu' || state === 'dead') startGame();
+});
+
+function jump() {
+  player.jumping = true;
+  player.jumpT = 0;
+  playJump();
+}
+
+function startGame() {
+  initAudio();
+  state = 'play';
+  score = 0;
+  combo = 1;
+  maxCombo = 1;
+  difficulty = 0;
+  spawnInterval = 2.0;
+  spawnTimer = 0.8;
+  time = 0;
+  player.angle = -Math.PI / 2;
+  player.jumping = false;
+  player.jumpT = 0;
+  player.trail = [];
+  pulses = [];
+  particles = [];
+  overlay.classList.add('hidden');
+  scoreEl.textContent = '0';
+  comboEl.textContent = '×1';
+}
+
+function die() {
+  state = 'dead';
+  shakeT = 0.5;
+  playHit();
+  // Explosion particles
+  const px = cx + Math.cos(player.angle) * player.radius;
+  const py = cy + Math.sin(player.angle) * player.radius;
+  for (let i = 0; i < 40; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = Math.random() * 200 + 50;
+    particles.push({
+      x: px, y: py,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 1,
+      decay: Math.random() * 1.5 + 0.8,
+      r: Math.random() * 4 + 2,
+      color: ['#ff6b9d', '#a855f7', '#00d4ff'][Math.floor(Math.random() * 3)]
+    });
+  }
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('pulseArena_best', bestScore);
+    bestEl.textContent = bestScore;
+  }
+  setTimeout(() => {
+    overlay.querySelector('h1').textContent = 'GAME OVER';
+    overlay.querySelector('.subtitle').textContent = '';
+    overlay.querySelector('.score-display')?.remove();
+    const sd = document.createElement('div');
+    sd.className = 'score-display';
+    sd.textContent = `score: ${score} · best combo: ×${maxCombo}`;
+    overlay.querySelector('.prompt').before(sd);
+    overlay.querySelector('.prompt').textContent = 'tap or press space to retry';
+    overlay.classList.remove('hidden');
+  }, 800);
+}
+
+// Pulse types with distinct visuals
+const PULSE_TYPES = [
+  { name: 'ring', color: '#00d4ff', glow: 'rgba(0,212,255,', width: 3 },
+  { name: 'ring', color: '#a855f7', glow: 'rgba(168,85,247,', width: 3 },
+  { name: 'ring', color: '#ff6b9d', glow: 'rgba(255,107,157,', width: 3 },
+  { name: 'ring', color: '#50fa7b', glow: 'rgba(80,250,123,', width: 3 },
+  { name: 'double', color: '#ffb347', glow: 'rgba(255,179,71,', width: 2 },
+];
+
+function spawnPulse() {
+  const type = PULSE_TYPES[Math.floor(Math.random() * (difficulty > 10 ? PULSE_TYPES.length : 3))];
+  const speed = 80 + difficulty * 3 + Math.random() * 20;
+  const p = { radius: 0, speed, type, opacity: 1, scored: false };
+  if (type.name === 'double') {
+    pulses.push(p);
+    // Second ring slightly delayed
+    pulses.push({ radius: -15, speed: speed, type, opacity: 1, scored: false });
+  } else {
+    pulses.push(p);
+  }
+  // Beat sound
+  playTone(200 + Math.random() * 100, 0.1, 0.03, 'triangle');
+}
+
+let lastT = 0;
+function update(ts) {
+  const dt = Math.min((ts - lastT) / 1000, 0.05);
+  lastT = ts;
+
+  if (state === 'play') {
+    time += dt;
+    difficulty = Math.floor(time / 5);
+
+    // Movement
+    moveDir = 0;
+    if (keys['ArrowLeft'] || keys['KeyA']) moveDir = -1;
+    if (keys['ArrowRight'] || keys['KeyD']) moveDir = 1;
+    if (moveDir === 0) moveDir = 1; // auto-orbit
+    player.angle += moveDir * PLAYER_SPEED * dt;
+
+    // Jump physics
+    let jumpOffset = 0;
+    if (player.jumping) {
+      player.jumpT += dt;
+      if (player.jumpT >= player.jumpDur) {
+        player.jumping = false;
+        player.jumpT = 0;
+      } else {
+        const t = player.jumpT / player.jumpDur;
+        jumpOffset = Math.sin(t * Math.PI) * JUMP_HEIGHT;
+      }
+    }
+    player.radius = arenaR + ORBIT_OFFSET + jumpOffset;
+
+    // Trail
+    const px = cx + Math.cos(player.angle) * player.radius;
+    const py = cy + Math.sin(player.angle) * player.radius;
+    player.trail.unshift({ x: px, y: py, age: 0 });
+    if (player.trail.length > 30) player.trail.pop();
+    player.trail.forEach(t => t.age += dt);
+
+    // Spawn pulses
+    spawnTimer -= dt;
+    spawnInterval = Math.max(0.5, 2.0 - difficulty * 0.08);
+    if (spawnTimer <= 0) {
+      spawnPulse();
+      spawnTimer = spawnInterval + (Math.random() - 0.5) * 0.3;
+    }
+
+    // Update pulses
+    const groundR = arenaR + ORBIT_OFFSET;
+    for (let i = pulses.length - 1; i >= 0; i--) {
+      const p = pulses[i];
+      p.radius += p.speed * dt;
+
+      // Check if pulse crosses player orbit (ground level)
+      if (!p.scored && p.radius > groundR + 15) {
+        // Player dodged it
+        if (!player.jumping || jumpOffset < 15) {
+          // Close call while on ground — check collision
+        } else {
+          // In the air — score!
+          p.scored = true;
+          score += 10 * combo;
+          combo++;
+          if (combo > maxCombo) maxCombo = combo;
+          scoreEl.textContent = score;
+          comboEl.textContent = `×${combo}`;
+          playDodge();
+          // Dodge particles
+          for (let j = 0; j < 8; j++) {
+            particles.push({
+              x: px, y: py,
+              vx: (Math.random() - 0.5) * 100,
+              vy: (Math.random() - 0.5) * 100,
+              life: 1, decay: 2, r: 2,
+              color: p.type.color
+            });
+          }
+        }
+      }
+
+      // Collision check — pulse ring vs player on ground
+      if (!p.scored && !player.jumping && Math.abs(p.radius - groundR) < 12) {
+        die();
+        return;
+      }
+      // Also check if jumping but not high enough
+      if (!p.scored && player.jumping && jumpOffset < 20 && Math.abs(p.radius - groundR) < 10) {
+        die();
+        return;
+      }
+
+      // Missed pulse (no jump, went past)
+      if (!p.scored && p.radius > groundR + 20) {
+        p.scored = true;
+        combo = 1;
+        comboEl.textContent = '×1';
+      }
+
+      // Fade out far pulses
+      if (p.radius > arenaR + 200) {
+        p.opacity = Math.max(0, 1 - (p.radius - arenaR - 200) / 100);
+      }
+      if (p.radius > arenaR + 350) {
+        pulses.splice(i, 1);
+      }
+    }
+  }
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= p.decay * dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Screen shake
+  if (shakeT > 0) shakeT -= dt;
+
+  draw();
+  requestAnimationFrame(update);
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Shake offset
+  let sx = 0, sy = 0;
+  if (shakeT > 0) {
+    sx = (Math.random() - 0.5) * 12 * shakeT;
+    sy = (Math.random() - 0.5) * 12 * shakeT;
+  }
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  // Background stars
+  bgStars.forEach(s => {
+    s.brightness += s.speed * 0.02;
+    const b = (Math.sin(s.brightness * Math.PI * 2) + 1) / 2;
+    ctx.fillStyle = `rgba(200,200,255,${0.1 + b * 0.4})`;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Arena circle (subtle)
+  ctx.strokeStyle = 'rgba(100,100,180,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, arenaR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Arena glow rings (decorative)
+  for (let i = 0; i < 3; i++) {
+    const r = arenaR - 20 - i * 30;
+    if (r < 10) continue;
+    ctx.strokeStyle = `rgba(100,64,204,${0.04 - i * 0.01})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Center decoration
+  const centerPulse = Math.sin(time * 2) * 0.3 + 0.7;
+  const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, arenaR * 0.4);
+  gradient.addColorStop(0, `rgba(100,64,204,${0.08 * centerPulse})`);
+  gradient.addColorStop(1, 'rgba(100,64,204,0)');
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(cx, cy, arenaR * 0.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ground orbit ring
+  const groundR = arenaR + ORBIT_OFFSET;
+  ctx.strokeStyle = 'rgba(100,200,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 8]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, groundR, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Pulses
+  pulses.forEach(p => {
+    if (p.radius < 0) return;
+    ctx.save();
+    ctx.globalAlpha = p.opacity;
+    // Glow
+    ctx.shadowColor = p.type.color;
+    ctx.shadowBlur = 15;
+    ctx.strokeStyle = p.type.color;
+    ctx.lineWidth = p.type.width;
+    ctx.beginPath();
+    ctx.arc(cx, cy, p.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    // Inner glow line
+    ctx.globalAlpha = p.opacity * 0.3;
+    ctx.lineWidth = p.type.width + 4;
+    ctx.strokeStyle = p.type.glow + '0.2)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, p.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  });
+
+  // Player trail
+  if (state === 'play' || state === 'dead') {
+    player.trail.forEach((t, i) => {
+      const alpha = Math.max(0, 1 - t.age * 3) * 0.5;
+      if (alpha <= 0) return;
+      const r = PLAYER_SIZE * (1 - i / player.trail.length) * 0.6;
+      ctx.fillStyle = `rgba(0,212,255,${alpha})`;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // Player
+  if (state === 'play') {
+    const px = cx + Math.cos(player.angle) * player.radius;
+    const py = cy + Math.sin(player.angle) * player.radius;
+
+    // Outer glow
+    ctx.shadowColor = '#00d4ff';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#00d4ff';
+    ctx.beginPath();
+    ctx.arc(px, py, PLAYER_SIZE, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Inner bright
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(px, py, PLAYER_SIZE * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Jump indicator — shadow on ground when jumping
+    if (player.jumping) {
+      const gx = cx + Math.cos(player.angle) * groundR;
+      const gy = cy + Math.sin(player.angle) * groundR;
+      ctx.fillStyle = 'rgba(0,212,255,0.15)';
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, 8, 3, player.angle, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+requestAnimationFrame(update);
+</script>
+</body>
+</html>
