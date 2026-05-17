@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Chain Reaction — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #06060f;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+.back-link:hover { color: #9070ff; }
+canvas { display: block; margin-top: 8px; touch-action: none; }
+#hud {
+  position: fixed;
+  top: 10px;
+  right: 16px;
+  text-align: right;
+  font-size: 14px;
+  z-index: 100;
+  line-height: 1.6;
+  text-shadow: 0 0 10px rgba(100,60,200,0.6);
+}
+#hud .label { color: #887; font-size: 11px; }
+#hud .value { color: #fff; font-weight: bold; }
+#hud .highlight { color: #f0c040; }
+#overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+#overlay.show { opacity: 1; pointer-events: auto; }
+#overlay h1 {
+  font-size: 42px;
+  margin-bottom: 8px;
+  text-shadow: 0 0 30px rgba(200,100,255,0.8);
+}
+#overlay h2 {
+  font-size: 20px;
+  color: #aaa;
+  margin-bottom: 6px;
+  font-weight: normal;
+}
+#overlay .stats {
+  font-size: 16px;
+  color: #f0c040;
+  margin-bottom: 20px;
+}
+#overlay button {
+  background: linear-gradient(135deg, #6030b0, #9040e0);
+  border: none;
+  color: #fff;
+  padding: 14px 40px;
+  font-size: 18px;
+  font-family: 'Courier New', monospace;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 0 20px rgba(120,50,200,0.5);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+#overlay button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 30px rgba(140,70,220,0.7);
+}
+#overlay .sub { font-size: 12px; color: #666; margin-top: 12px; }
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div><span class="label">LEVEL </span><span class="value" id="levelNum">1</span></div>
+  <div><span class="label">CLICKS </span><span class="value highlight" id="clicksLeft">1</span></div>
+  <div><span class="label">GOAL </span><span class="value" id="goalText">0/1</span></div>
+  <div><span class="label">SCORE </span><span class="value highlight" id="scoreText">0</span></div>
+  <div><span class="label">COMBO </span><span class="value" id="comboText">0x</span></div>
+</div>
+<div id="overlay" class="show">
+  <h1>💥 Chain Reaction</h1>
+  <h2>Click to trigger explosions. Catch the orbs!</h2>
+  <button id="startBtn">START</button>
+  <div class="sub">Tip: time your click when orbs cluster together</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const canvas = $('c');
+const ctx = canvas.getContext('2d');
+const overlay = $('overlay');
+
+let W, H, dpr;
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Colors palette
+const COLORS = [
+  [255, 80, 120],  // hot pink
+  [80, 200, 255],  // cyan
+  [255, 200, 40],  // gold
+  [120, 255, 100], // green
+  [200, 100, 255], // purple
+  [255, 130, 50],  // orange
+  [100, 220, 200], // teal
+  [255, 100, 100], // red
+];
+
+// --- Game State ---
+let orbs = [];
+let explosions = [];
+let particles = [];
+let shockwaves = [];
+let floatingTexts = [];
+let level = 1;
+let score = 0;
+let totalCaught = 0;
+let clicks = 0;
+let maxClicks = 1;
+let goal = 1;
+let orbCount = 5;
+let state = 'menu'; // menu, playing, reacting, result
+let caught = 0;
+let combo = 0;
+let bestCombo = 0;
+
+// Level config
+function levelConfig(lvl) {
+  const orbs = Math.min(5 + lvl * 3, 60);
+  const goal = Math.min(Math.ceil(orbs * 0.3) + Math.floor(lvl / 3), orbs);
+  const clicks = lvl <= 2 ? 1 : lvl <= 5 ? 2 : lvl <= 9 ? 3 : Math.min(Math.floor(lvl / 3) + 1, 6);
+  return { orbs, goal, clicks };
+}
+
+class Orb {
+  constructor() {
+    this.r = 10 + Math.random() * 6;
+    this.x = this.r + Math.random() * (W - 2 * this.r);
+    this.y = this.r + Math.random() * (H - 2 * this.r);
+    const speed = 0.4 + Math.random() * 0.8;
+    const angle = Math.random() * Math.PI * 2;
+    this.vx = Math.cos(angle) * speed;
+    this.vy = Math.sin(angle) * speed;
+    this.color = COLORS[Math.floor(Math.random() * COLORS.length)];
+    this.alive = true;
+    this.pulse = Math.random() * Math.PI * 2;
+    this.trail = [];
+  }
+  update() {
+    if (!this.alive) return;
+    this.x += this.vx;
+    this.y += this.vy;
+    if (this.x < this.r) { this.x = this.r; this.vx *= -1; }
+    if (this.x > W - this.r) { this.x = W - this.r; this.vx *= -1; }
+    if (this.y < this.r) { this.y = this.r; this.vy *= -1; }
+    if (this.y > H - this.r) { this.y = H - this.r; this.vy *= -1; }
+    this.pulse += 0.06;
+    // Trail
+    this.trail.push({ x: this.x, y: this.y, a: 1 });
+    if (this.trail.length > 8) this.trail.shift();
+  }
+  draw() {
+    if (!this.alive) return;
+    const [r, g, b] = this.color;
+    const p = 0.6 + Math.sin(this.pulse) * 0.4;
+    // Trail
+    for (let i = 0; i < this.trail.length; i++) {
+      const t = this.trail[i];
+      const a = (i / this.trail.length) * 0.15;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, this.r * 0.6, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+      ctx.fill();
+    }
+    // Glow
+    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.r * 2.5);
+    grad.addColorStop(0, `rgba(${r},${g},${b},${0.3 * p})`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r * 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    // Core
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r * p, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${r},${g},${b},0.9)`;
+    ctx.fill();
+    // Highlight
+    ctx.beginPath();
+    ctx.arc(this.x - this.r * 0.25, this.y - this.r * 0.25, this.r * 0.3 * p, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,0.5)`;
+    ctx.fill();
+  }
+}
+
+class Explosion {
+  constructor(x, y, color, isClick) {
+    this.x = x;
+    this.y = y;
+    this.color = color || [255, 255, 255];
+    this.maxR = isClick ? 50 : 40 + Math.random() * 20;
+    this.r = 0;
+    this.growing = true;
+    this.life = 1;
+    this.lingered = 0;
+    this.lingerTime = 30; // frames to stay at max
+  }
+  update() {
+    if (this.growing) {
+      this.r += (this.maxR - this.r) * 0.12;
+      if (this.r >= this.maxR * 0.95) {
+        this.r = this.maxR;
+        this.growing = false;
+      }
+    } else if (this.lingered < this.lingerTime) {
+      this.lingered++;
+    } else {
+      this.life -= 0.025;
+    }
+    return this.life > 0;
+  }
+  draw() {
+    const [r, g, b] = this.color;
+    // Outer glow
+    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.r * 1.5);
+    grad.addColorStop(0, `rgba(${r},${g},${b},${0.15 * this.life})`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r * 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    // Core ring
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${r},${g},${b},${0.6 * this.life})`;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    // Fill
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${r},${g},${b},${0.12 * this.life})`;
+    ctx.fill();
+  }
+  active() { return this.life > 0; }
+}
+
+class Particle {
+  constructor(x, y, color) {
+    this.x = x;
+    this.y = y;
+    const [r, g, b] = color;
+    this.r = r; this.g = g; this.b = b;
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * 4;
+    this.vx = Math.cos(angle) * speed;
+    this.vy = Math.sin(angle) * speed;
+    this.life = 1;
+    this.decay = 0.01 + Math.random() * 0.025;
+    this.size = 1 + Math.random() * 2.5;
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vx *= 0.98;
+    this.vy *= 0.98;
+    this.life -= this.decay;
+    return this.life > 0;
+  }
+  draw() {
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${this.r},${this.g},${this.b},${this.life})`;
+    ctx.fill();
+  }
+}
+
+class Shockwave {
+  constructor(x, y, color) {
+    this.x = x;
+    this.y = y;
+    this.r = 0;
+    this.maxR = 80 + Math.random() * 40;
+    this.life = 1;
+    this.color = color;
+  }
+  update() {
+    this.r += 3;
+    this.life = Math.max(0, 1 - this.r / this.maxR);
+    return this.life > 0;
+  }
+  draw() {
+    const [r, g, b] = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${r},${g},${b},${this.life * 0.4})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+}
+
+class FloatingText {
+  constructor(x, y, text, color) {
+    this.x = x;
+    this.y = y;
+    this.text = text;
+    this.color = color || [255, 255, 255];
+    this.life = 1;
+    this.vy = -1.2;
+  }
+  update() {
+    this.y += this.vy;
+    this.vy *= 0.98;
+    this.life -= 0.015;
+    return this.life > 0;
+  }
+  draw() {
+    const [r, g, b] = this.color;
+    ctx.font = 'bold 16px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(${r},${g},${b},${this.life})`;
+    ctx.fillText(this.text, this.x, this.y);
+  }
+}
+
+// --- Stars background ---
+const stars = [];
+for (let i = 0; i < 120; i++) {
+  stars.push({
+    x: Math.random() * 2000,
+    y: Math.random() * 2000,
+    r: Math.random() * 1.2,
+    a: 0.2 + Math.random() * 0.5,
+    twinkle: Math.random() * Math.PI * 2,
+  });
+}
+function drawStars() {
+  for (const s of stars) {
+    s.twinkle += 0.01;
+    const a = s.a * (0.5 + Math.sin(s.twinkle) * 0.5);
+    ctx.beginPath();
+    ctx.arc(s.x % W, s.y % H, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(200,200,255,${a})`;
+    ctx.fill();
+  }
+}
+
+function spawnOrbs(count) {
+  orbs = [];
+  for (let i = 0; i < count; i++) orbs.push(new Orb());
+}
+
+function startLevel() {
+  const cfg = levelConfig(level);
+  orbCount = cfg.orbs;
+  goal = cfg.goal;
+  maxClicks = cfg.clicks;
+  clicks = 0;
+  caught = 0;
+  combo = 0;
+  explosions = [];
+  particles = [];
+  shockwaves = [];
+  floatingTexts = [];
+  spawnOrbs(orbCount);
+  state = 'playing';
+  updateHUD();
+}
+
+function updateHUD() {
+  $('levelNum').textContent = level;
+  $('clicksLeft').textContent = maxClicks - clicks;
+  $('goalText').textContent = `${caught}/${goal}`;
+  $('scoreText').textContent = score;
+  $('comboText').textContent = combo + 'x';
+}
+
+function triggerExplosion(x, y, color, isClick) {
+  const e = new Explosion(x, y, color, isClick);
+  explosions.push(e);
+  shockwaves.push(new Shockwave(x, y, color));
+  // Spawn particles
+  const count = 12 + Math.floor(Math.random() * 10);
+  for (let i = 0; i < count; i++) particles.push(new Particle(x, y, color));
+}
+
+function catchOrb(orb) {
+  orb.alive = false;
+  caught++;
+  combo++;
+  if (combo > bestCombo) bestCombo = combo;
+  const comboBonus = combo >= 10 ? 5 : combo >= 5 ? 3 : combo >= 3 ? 2 : 1;
+  const pts = 10 * comboBonus;
+  score += pts;
+  triggerExplosion(orb.x, orb.y, orb.color, false);
+  if (combo >= 3) {
+    floatingTexts.push(new FloatingText(orb.x, orb.y - 15, `${combo}x COMBO! +${pts}`, [255, 220, 60]));
+  } else {
+    floatingTexts.push(new FloatingText(orb.x, orb.y - 15, `+${pts}`, orb.color));
+  }
+  updateHUD();
+}
+
+function handleClick(x, y) {
+  if (state === 'playing' && clicks < maxClicks) {
+    clicks++;
+    triggerExplosion(x, y, [255, 255, 255], true);
+    updateHUD();
+    if (clicks >= maxClicks) {
+      state = 'reacting'; // now just watch the chain
+    }
+  }
+}
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  handleClick(e.clientX - rect.left, e.clientY - rect.top);
+});
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  handleClick(t.clientX - rect.left, t.clientY - rect.top);
+}, { passive: false });
+
+function checkCollisions() {
+  for (const orb of orbs) {
+    if (!orb.alive) continue;
+    for (const exp of explosions) {
+      if (!exp.active()) continue;
+      const dx = orb.x - exp.x;
+      const dy = orb.y - exp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < exp.r + orb.r) {
+        catchOrb(orb);
+        break;
+      }
+    }
+  }
+}
+
+function checkLevelEnd() {
+  if (state !== 'playing' && state !== 'reacting') return;
+  const anyExpAlive = explosions.some(e => e.active());
+  if (state === 'reacting' && !anyExpAlive) {
+    // Level ended
+    setTimeout(() => showResult(), 400);
+    state = 'wait';
+  }
+  if (state === 'playing' && clicks >= maxClicks && !anyExpAlive) {
+    setTimeout(() => showResult(), 400);
+    state = 'wait';
+  }
+}
+
+function showResult() {
+  const passed = caught >= goal;
+  const h1 = overlay.querySelector('h1');
+  const h2 = overlay.querySelector('h2');
+  const stats = overlay.querySelector('.stats') || document.createElement('div');
+  stats.className = 'stats';
+  const btn = overlay.querySelector('button');
+  const sub = overlay.querySelector('.sub');
+
+  if (passed) {
+    h1.textContent = level >= 15 ? '🌟 LEGENDARY!' : caught >= orbCount ? '🔥 PERFECT!' : '✨ Level Clear!';
+    h2.textContent = `Caught ${caught}/${orbCount} orbs`;
+    stats.textContent = `Score: ${score} | Best Combo: ${bestCombo}x`;
+    btn.textContent = 'NEXT LEVEL';
+    sub.textContent = `Level ${level + 1} awaits...`;
+    btn.onclick = () => { overlay.classList.remove('show'); level++; startLevel(); };
+  } else {
+    h1.textContent = '💔 Not Enough!';
+    h2.textContent = `Caught ${caught}/${goal} needed`;
+    stats.textContent = `Score: ${score}`;
+    btn.textContent = 'RETRY';
+    sub.textContent = 'Tip: wait for orbs to cluster, then click!';
+    btn.onclick = () => { overlay.classList.remove('show'); startLevel(); };
+  }
+  if (!overlay.querySelector('.stats')) overlay.insertBefore(stats, btn);
+  overlay.classList.add('show');
+  state = 'result';
+}
+
+// --- Main Loop ---
+function frame() {
+  ctx.clearRect(0, 0, W, H);
+  
+  // Background gradient
+  const bgGrad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W, H) * 0.7);
+  bgGrad.addColorStop(0, '#0a0a1a');
+  bgGrad.addColorStop(1, '#04040c');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, H);
+  
+  drawStars();
+
+  if (state === 'playing' || state === 'reacting' || state === 'wait') {
+    // Update orbs
+    for (const orb of orbs) orb.update();
+    
+    // Update explosions
+    explosions = explosions.filter(e => { e.update(); return e.active(); });
+    
+    // Update particles
+    particles = particles.filter(p => p.update());
+    
+    // Update shockwaves
+    shockwaves = shockwaves.filter(s => s.update());
+    
+    // Update floating text
+    floatingTexts = floatingTexts.filter(f => f.update());
+    
+    // Collisions
+    checkCollisions();
+    
+    // Draw order: shockwaves → explosions → orbs → particles → text
+    for (const s of shockwaves) s.draw();
+    for (const e of explosions) e.draw();
+    for (const orb of orbs) orb.draw();
+    for (const p of particles) p.draw();
+    for (const f of floatingTexts) f.draw();
+    
+    checkLevelEnd();
+  }
+  
+  requestAnimationFrame(frame);
+}
+
+$('startBtn').onclick = () => {
+  overlay.classList.remove('show');
+  level = 1;
+  score = 0;
+  bestCombo = 0;
+  startLevel();
+};
+
+frame();
+</script>
+</body>
+</html>
