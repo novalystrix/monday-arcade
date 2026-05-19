@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Moonrise — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #f0c060; text-decoration: none; font-size: 13px;
+  z-index: 100; opacity: 0.7; transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+canvas { display: block; }
+#hud {
+  position: fixed; top: 12px; right: 16px;
+  text-align: right; z-index: 100; font-size: 14px;
+  line-height: 1.6; text-shadow: 0 0 8px rgba(240,200,100,0.5);
+  pointer-events: none;
+}
+#start-screen, #game-over {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; z-index: 200;
+  background: rgba(10,10,26,0.85);
+}
+#start-screen h1 { font-size: 48px; color: #ffe8a0; text-shadow: 0 0 30px rgba(255,220,120,0.6); margin-bottom: 8px; }
+#start-screen .sub { font-size: 14px; color: #a098c0; margin-bottom: 32px; }
+#game-over h2 { font-size: 36px; color: #ff8080; margin-bottom: 8px; }
+#game-over .score-display { font-size: 20px; color: #ffe8a0; margin-bottom: 24px; }
+.btn {
+  padding: 12px 36px; font-family: inherit; font-size: 16px;
+  background: transparent; border: 1.5px solid #f0c060; color: #f0c060;
+  border-radius: 24px; cursor: pointer; transition: all 0.2s;
+}
+.btn:hover { background: #f0c060; color: #0a0a1a; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+<div id="hud">
+  <div>⭐ <span id="score">0</span></div>
+  <div>🌙 <span id="altitude">0</span>m</div>
+</div>
+<div id="start-screen">
+  <h1>🌙 Moonrise</h1>
+  <p class="sub">drift through shifting skies · collect stars · avoid dark clouds</p>
+  <button class="btn" id="play-btn">Ascend</button>
+</div>
+<div id="game-over" style="display:none">
+  <h2>Faded into Dawn</h2>
+  <div class="score-display">
+    <div>⭐ <span id="final-score">0</span> stars</div>
+    <div>🌙 <span id="final-alt">0</span>m altitude</div>
+    <div style="margin-top:8px;font-size:14px;color:#a098c0">Best: <span id="best-score">0</span> ⭐</div>
+  </div>
+  <button class="btn" id="retry-btn">Rise Again</button>
+</div>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Game state
+let playing = false;
+let score = 0;
+let altitude = 0;
+let bestScore = parseInt(localStorage.getItem('moonrise-best') || '0');
+let moon = { x: 0, y: 0, r: 22, vx: 0, vy: 0, glow: 1 };
+let stars = [];
+let clouds = [];
+let particles = [];
+let bgStars = [];
+let time = 0;
+let skyPhase = 0; // 0 = sunset, 1 = twilight, 2 = night, 3 = deep night
+let shakeTimer = 0;
+let comboTimer = 0;
+let combo = 0;
+let trailPoints = [];
+
+// Input
+let keys = {};
+let touchX = null;
+window.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); touchX = e.touches[0].clientX; });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); touchX = e.touches[0].clientX; });
+canvas.addEventListener('touchend', e => { touchX = null; });
+canvas.addEventListener('mousedown', e => { touchX = e.clientX; });
+canvas.addEventListener('mousemove', e => { if (e.buttons) touchX = e.clientX; });
+canvas.addEventListener('mouseup', () => { touchX = null; });
+
+// Sky gradient colors by phase
+const skyColors = [
+  // Sunset: warm orange to purple
+  [['#ff6030','#ff8040','#c060a0','#4030a0','#1a1040'],0],
+  // Twilight: purple to deep blue  
+  [['#6030a0','#4040c0','#2030a0','#101060','#080830'],1],
+  // Night: deep blue to black
+  [['#1020a0','#101080','#0a0a60','#060640','#040420'],2],
+  // Deep night: near black with blue tint
+  [['#0a0a40','#080830','#060620','#040418','#020210'],3],
+];
+
+function lerpColor(a, b, t) {
+  const ah = parseInt(a.slice(1), 16), bh = parseInt(b.slice(1), 16);
+  const ar = ah >> 16, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
+  const br = bh >> 16, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
+  const rr = Math.round(ar + (br - ar) * t);
+  const rg = Math.round(ag + (bg - ag) * t);
+  const rb = Math.round(ab + (bb - ab) * t);
+  return `#${((rr << 16) | (rg << 8) | rb).toString(16).padStart(6, '0')}`;
+}
+
+function getSkyGradient() {
+  const phase = Math.min(skyPhase, 3);
+  const idx = Math.floor(phase);
+  const frac = phase - idx;
+  const curr = skyColors[Math.min(idx, 3)][0];
+  const next = skyColors[Math.min(idx + 1, 3)] ? skyColors[Math.min(idx + 1, 3)][0] : curr;
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  for (let i = 0; i < 5; i++) {
+    grad.addColorStop(i / 4, lerpColor(curr[i], next[i], frac));
+  }
+  return grad;
+}
+
+function initBgStars() {
+  bgStars = [];
+  for (let i = 0; i < 120; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.5 + 0.3,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.5 + 0.2
+    });
+  }
+}
+
+function spawnStar() {
+  const size = Math.random() < 0.15 ? 'big' : 'normal';
+  stars.push({
+    x: Math.random() * (W - 80) + 40,
+    y: -30,
+    r: size === 'big' ? 14 : 8,
+    points: size === 'big' ? 3 : 1,
+    pulse: Math.random() * Math.PI * 2,
+    color: size === 'big' ? '#ffe060' : '#ffd080',
+    collected: false,
+    collectAnim: 0
+  });
+}
+
+function spawnCloud() {
+  const dark = skyPhase > 1 && Math.random() < 0.3 + skyPhase * 0.1;
+  const w = Math.random() * 120 + 60;
+  clouds.push({
+    x: Math.random() * (W + 100) - 50,
+    y: -60,
+    w: w,
+    h: Math.random() * 30 + 20,
+    dark: dark,
+    opacity: dark ? 0.7 : 0.15 + Math.random() * 0.15,
+    speed: (Math.random() - 0.5) * 0.3
+  });
+}
+
+function emitParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1,
+      r: Math.random() * 3 + 1,
+      life: 1,
+      decay: Math.random() * 0.02 + 0.015,
+      color
+    });
+  }
+}
+
+function emitTrail() {
+  trailPoints.push({
+    x: moon.x, y: moon.y,
+    life: 1, r: moon.r * 0.6
+  });
+  if (trailPoints.length > 30) trailPoints.shift();
+}
+
+function init() {
+  score = 0;
+  altitude = 0;
+  time = 0;
+  skyPhase = 0;
+  combo = 0;
+  comboTimer = 0;
+  shakeTimer = 0;
+  moon = { x: W / 2, y: H * 0.7, r: 22, vx: 0, vy: 0, glow: 1 };
+  stars = [];
+  clouds = [];
+  particles = [];
+  trailPoints = [];
+  initBgStars();
+  document.getElementById('score').textContent = '0';
+  document.getElementById('altitude').textContent = '0';
+}
+
+function update(dt) {
+  time += dt;
+  altitude += dt * (30 + skyPhase * 10);
+  skyPhase = Math.min(altitude / 800, 3.5);
+
+  // Moon movement
+  const accel = 0.4;
+  const friction = 0.92;
+  const maxSpeed = 6;
+
+  if (touchX !== null) {
+    const dx = touchX - moon.x;
+    moon.vx += Math.sign(dx) * Math.min(Math.abs(dx) * 0.08, accel);
+  } else {
+    if (keys['ArrowLeft'] || keys['a']) moon.vx -= accel;
+    if (keys['ArrowRight'] || keys['d']) moon.vx += accel;
+  }
+  moon.vx *= friction;
+  moon.vx = Math.max(-maxSpeed, Math.min(maxSpeed, moon.vx));
+  moon.x += moon.vx;
+
+  // Gentle vertical bob
+  moon.y = H * 0.65 + Math.sin(time * 1.5) * 8;
+
+  // Wrap edges
+  if (moon.x < -moon.r) moon.x = W + moon.r;
+  if (moon.x > W + moon.r) moon.x = -moon.r;
+
+  // Glow pulse
+  moon.glow = 0.8 + Math.sin(time * 2) * 0.2;
+  if (comboTimer > 0) moon.glow += combo * 0.1;
+
+  // Trail
+  if (Math.abs(moon.vx) > 0.5) emitTrail();
+
+  // Spawn things
+  if (Math.random() < 0.03 + skyPhase * 0.005) spawnStar();
+  if (Math.random() < 0.012 + skyPhase * 0.003) spawnCloud();
+
+  // Move stars down (moon ascends)
+  const scrollSpeed = 1.5 + skyPhase * 0.5;
+  for (let i = stars.length - 1; i >= 0; i--) {
+    const s = stars[i];
+    s.y += scrollSpeed;
+    s.pulse += dt * 3;
+    if (s.collected) {
+      s.collectAnim += dt * 5;
+      if (s.collectAnim > 1) { stars.splice(i, 1); continue; }
+    } else {
+      // Collision
+      const dx = s.x - moon.x, dy = s.y - moon.y;
+      if (Math.sqrt(dx * dx + dy * dy) < moon.r + s.r) {
+        s.collected = true;
+        const pts = s.points * (1 + Math.floor(combo / 3));
+        score += pts;
+        combo++;
+        comboTimer = 2;
+        emitParticles(s.x, s.y, s.color, 12);
+        document.getElementById('score').textContent = score;
+      }
+    }
+    if (s.y > H + 40) stars.splice(i, 1);
+  }
+
+  // Combo timer
+  if (comboTimer > 0) {
+    comboTimer -= dt;
+    if (comboTimer <= 0) { combo = 0; comboTimer = 0; }
+  }
+
+  // Move clouds
+  for (let i = clouds.length - 1; i >= 0; i--) {
+    const c = clouds[i];
+    c.y += scrollSpeed * 0.7;
+    c.x += c.speed;
+    // Dark cloud collision
+    if (c.dark) {
+      const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+      const dx = moon.x - cx, dy = moon.y - cy;
+      if (Math.abs(dx) < c.w / 2 + moon.r * 0.6 && Math.abs(dy) < c.h / 2 + moon.r * 0.6) {
+        shakeTimer = 0.3;
+        moon.glow -= 0.15;
+        score = Math.max(0, score - 2);
+        emitParticles(moon.x, moon.y, '#8060a0', 8);
+        c.dark = false;
+        c.opacity = 0.05;
+        document.getElementById('score').textContent = score;
+        combo = 0;
+        // Lose condition: if glow depleted
+        if (moon.glow < 0.2 && score === 0 && altitude > 200) {
+          gameOver();
+          return;
+        }
+      }
+    }
+    if (c.y > H + 80) clouds.splice(i, 1);
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.03;
+    p.life -= p.decay;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Trail fade
+  for (let i = trailPoints.length - 1; i >= 0; i--) {
+    trailPoints[i].life -= 0.04;
+    trailPoints[i].y += scrollSpeed * 0.3;
+    if (trailPoints[i].life <= 0) trailPoints.splice(i, 1);
+  }
+
+  // BG stars scroll
+  bgStars.forEach(s => {
+    s.y += scrollSpeed * 0.15;
+    s.twinkle += dt * s.speed * 3;
+    if (s.y > H + 5) { s.y = -5; s.x = Math.random() * W; }
+  });
+
+  // Auto game over at very high altitude for a graceful end
+  if (altitude > 5000) gameOver();
+
+  document.getElementById('altitude').textContent = Math.floor(altitude);
+
+  // Regenerate moon glow slowly
+  moon.glow = Math.min(moon.glow + dt * 0.05, 1.5);
+}
+
+function draw() {
+  // Sky
+  ctx.fillStyle = getSkyGradient();
+  ctx.fillRect(0, 0, W, H);
+
+  // Shake
+  if (shakeTimer > 0) {
+    const s = shakeTimer * 10;
+    ctx.save();
+    ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
+    shakeTimer -= 0.016;
+  }
+
+  // BG stars (visibility increases with sky phase)
+  const starVis = Math.min(skyPhase / 1.5, 1);
+  if (starVis > 0) {
+    bgStars.forEach(s => {
+      const alpha = (0.3 + Math.sin(s.twinkle) * 0.3) * starVis;
+      ctx.fillStyle = `rgba(255,255,240,${alpha})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // Clouds (behind moon)
+  clouds.forEach(c => {
+    if (c.dark) {
+      ctx.fillStyle = `rgba(30,10,40,${c.opacity})`;
+    } else {
+      ctx.fillStyle = `rgba(200,190,220,${c.opacity})`;
+    }
+    // Soft cloud shape
+    ctx.beginPath();
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    ctx.ellipse(cx, cy, c.w / 2, c.h / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Extra puffs
+    ctx.beginPath();
+    ctx.ellipse(cx - c.w * 0.25, cy - c.h * 0.2, c.w * 0.3, c.h * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + c.w * 0.2, cy - c.h * 0.15, c.w * 0.25, c.h * 0.35, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Dark cloud indicator
+    if (c.dark) {
+      ctx.fillStyle = `rgba(80,0,60,${c.opacity * 0.5})`;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, c.w / 2 + 4, c.h / 2 + 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+
+  // Trail
+  trailPoints.forEach(t => {
+    const alpha = t.life * 0.3;
+    const grad = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, t.r);
+    grad.addColorStop(0, `rgba(255,230,150,${alpha})`);
+    grad.addColorStop(1, `rgba(255,200,100,0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Collectible stars
+  stars.forEach(s => {
+    if (s.collected) {
+      const scale = 1 + s.collectAnim * 2;
+      const alpha = 1 - s.collectAnim;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(s.x, s.y);
+      ctx.scale(scale, scale);
+      drawStar(0, 0, s.r, s.color);
+      ctx.restore();
+    } else {
+      const pulse = 1 + Math.sin(s.pulse) * 0.15;
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.scale(pulse, pulse);
+      drawStar(0, 0, s.r, s.color);
+      ctx.restore();
+    }
+  });
+
+  // Moon
+  drawMoon();
+
+  // Particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // Combo display
+  if (comboTimer > 0 && combo >= 3) {
+    ctx.save();
+    ctx.font = 'bold 20px Courier New';
+    ctx.fillStyle = `rgba(255,230,150,${Math.min(comboTimer, 1)})`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`${combo}x combo!`, moon.x, moon.y - 50);
+    ctx.restore();
+  }
+
+  if (shakeTimer > 0) ctx.restore();
+}
+
+function drawStar(x, y, r, color) {
+  // Glow
+  const grad = ctx.createRadialGradient(x, y, 0, x, y, r * 2.5);
+  grad.addColorStop(0, color);
+  grad.addColorStop(0.4, color + '80');
+  grad.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Star shape
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const angle = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+    const px = x + Math.cos(angle) * r;
+    const py = y + Math.sin(angle) * r;
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawMoon() {
+  const { x, y, r, glow } = moon;
+  // Outer glow
+  const g1 = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 4);
+  g1.addColorStop(0, `rgba(255,240,200,${0.3 * glow})`);
+  g1.addColorStop(0.5, `rgba(255,220,150,${0.1 * glow})`);
+  g1.addColorStop(1, 'transparent');
+  ctx.fillStyle = g1;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Moon body
+  const g2 = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
+  g2.addColorStop(0, '#fffde8');
+  g2.addColorStop(0.7, '#ffe8a0');
+  g2.addColorStop(1, '#e8c860');
+  ctx.fillStyle = g2;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Craters (subtle)
+  ctx.fillStyle = 'rgba(200,180,120,0.3)';
+  ctx.beginPath(); ctx.arc(x - 6, y - 4, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + 5, y + 6, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + 8, y - 7, 2, 0, Math.PI * 2); ctx.fill();
+
+  // Inner glow ring
+  ctx.strokeStyle = `rgba(255,240,200,${0.4 * glow})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, r + 3, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function gameOver() {
+  playing = false;
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('moonrise-best', bestScore);
+  }
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('final-alt').textContent = Math.floor(altitude);
+  document.getElementById('best-score').textContent = bestScore;
+  document.getElementById('game-over').style.display = 'flex';
+}
+
+function startGame() {
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('game-over').style.display = 'none';
+  init();
+  playing = true;
+}
+
+// Game loop
+let lastTime = 0;
+function loop(ts) {
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+  if (playing) update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Draw initial screen
+initBgStars();
+requestAnimationFrame(loop);
+
+document.getElementById('play-btn').onclick = startGame;
+document.getElementById('retry-btn').onclick = startGame;
+</script>
+</body>
+</html>
