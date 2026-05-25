@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Ember Storm — monday arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #05050f;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #8866ff; }
+#header {
+  text-align: center; margin-bottom: 6px;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #333355;
+}
+#header h1 {
+  font-size: 2rem; letter-spacing: 0.25em; text-transform: uppercase;
+  background: linear-gradient(90deg, #ff4422, #ff8800, #ffdd00);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 12px #ff440066);
+  animation: emberTitle 3s ease-in-out infinite alternate;
+}
+@keyframes emberTitle {
+  0% { filter: drop-shadow(0 0 8px #ff440066); }
+  100% { filter: drop-shadow(0 0 20px #ff8800aa); }
+}
+#stats {
+  display: flex; gap: 20px; font-size: 0.8rem; margin-top: 4px;
+  color: #444466; justify-content: center; flex-wrap: wrap;
+}
+#stats .val { font-weight: bold; }
+#score-val { color: #ffdd44; text-shadow: 0 0 8px #ffaa0066; }
+#combo-val { color: #ff6644; text-shadow: 0 0 8px #ff440066; }
+#lives-val { color: #ff4466; text-shadow: 0 0 8px #ff000066; }
+#wave-val { color: #44aaff; text-shadow: 0 0 8px #0088ff66; }
+canvas { border-radius: 10px; display: block; }
+#overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(5,5,15,0.93); z-index: 50;
+  text-align: center; padding: 20px;
+}
+#overlay.hidden { display: none; }
+#overlay h2 {
+  font-size: 2.6rem; letter-spacing: 0.2em; margin-bottom: 8px; text-transform: uppercase;
+  background: linear-gradient(90deg, #ff4422, #ff8800, #ffdd00);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 16px #ff6600aa);
+}
+#overlay .subtitle { color: #443322; font-size: 0.75rem; letter-spacing: 0.15em; margin-bottom: 24px; }
+#overlay p { color: #666688; margin: 5px; font-size: 0.85rem; line-height: 1.6; }
+#overlay .key { color: #ff8800; font-weight: bold; }
+#final-score-block { display: none; margin-bottom: 16px; }
+#final-score-block .label { color: #554433; font-size: 0.75rem; letter-spacing: 0.1em; margin-bottom: 4px; }
+#final-score-block .big { font-size: 3rem; color: #ffdd44; text-shadow: 0 0 20px #ffaa00; letter-spacing: 0.1em; }
+#final-score-block .sub { color: #886644; font-size: 0.8rem; margin-top: 4px; }
+.btn {
+  margin-top: 20px; padding: 13px 40px; border: 1px solid #ff660044;
+  background: #ff660018; color: #ff8822; font-family: inherit;
+  font-size: 1rem; letter-spacing: 0.12em; border-radius: 6px; cursor: pointer;
+  transition: all 0.2s; text-transform: uppercase;
+}
+.btn:hover { background: #ff660033; border-color: #ff660088; box-shadow: 0 0 16px #ff440033; }
+.color-legend {
+  display: flex; gap: 16px; justify-content: center; margin: 12px 0;
+}
+.legend-item {
+  display: flex; align-items: center; gap: 6px; font-size: 0.75rem;
+}
+.legend-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← arcade</a>
+<div id="header">
+  <div id="stats-sub" style="font-size:0.65rem;letter-spacing:0.18em;color:#221a0f;margin-bottom:2px;">monday arcade</div>
+  <h1>EMBER STORM</h1>
+  <div id="stats">
+    Score: <span id="score-val" class="val">0</span>
+    &nbsp;|&nbsp;
+    Combo: <span id="combo-val" class="val">×1</span>
+    &nbsp;|&nbsp;
+    Lives: <span id="lives-val" class="val">❤❤❤</span>
+    &nbsp;|&nbsp;
+    Wave: <span id="wave-val" class="val">1</span>
+  </div>
+</div>
+<canvas id="c"></canvas>
+
+<div id="overlay" data-state="start">
+  <div class="subtitle">monday arcade</div>
+  <h2>🔥 Ember Storm</h2>
+  <div id="final-score-block">
+    <div class="label">FINAL SCORE</div>
+    <div class="big" id="final-score-num">0</div>
+    <div class="sub" id="final-wave-num">Wave 1</div>
+  </div>
+  <p>Embers rain from the sky. Your crystal must match their color.</p>
+  <p><span class="key">Mouse / Touch</span> — move crystal horizontally</p>
+  <p><span class="key">Click / Tap</span> — cycle crystal color</p>
+  <div class="color-legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#ff3322;box-shadow:0 0 6px #ff3322;"></div> Red</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#33aaff;box-shadow:0 0 6px #33aaff;"></div> Blue</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ffcc00;box-shadow:0 0 6px #ffcc00;"></div> Gold</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ffffff;box-shadow:0 0 6px #ffffff;"></div> Wild ✨</div>
+  </div>
+  <p style="color:#443322;font-size:0.75rem;">Wrong color = damage | 3 lives | combo multiplier</p>
+  <button class="btn" id="startBtn">IGNITE</button>
+</div>
+
+<script>
+(function() {
+'use strict';
+
+// ─── Canvas setup ───────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+
+let W, H;
+function resize() {
+  const maxW = Math.min(window.innerWidth - 8, 520);
+  const maxH = window.innerHeight - 100;
+  const ratio = Math.min(maxW / 520, maxH / 720);
+  W = canvas.width = Math.floor(520 * ratio);
+  H = canvas.height = Math.floor(720 * ratio);
+}
+resize();
+window.addEventListener('resize', () => { resize(); });
+
+// ─── Colors ──────────────────────────────────────────────────────────────────
+const COLORS = {
+  red:  { id: 0, name: 'red',  hex: '#ff3322', glow: '#ff220066', trail: '#ff5533', dark: '#661100', rgb: [255, 51, 34]  },
+  blue: { id: 1, name: 'blue', hex: '#33aaff', glow: '#0088ff66', trail: '#55ccff', dark: '#003366', rgb: [51, 170, 255] },
+  gold: { id: 2, name: 'gold', hex: '#ffcc00', glow: '#ffaa0066', trail: '#ffee44', dark: '#664400', rgb: [255, 204, 0]  },
+  white:{ id: 3, name: 'white',hex: '#ffffff', glow: '#ffffff66', trail: '#ffffee', dark: '#888888', rgb: [255, 255, 255] }
+};
+const COLOR_CYCLE = ['red', 'blue', 'gold'];
+
+// ─── State ───────────────────────────────────────────────────────────────────
+let gameState = 'idle'; // idle | playing | over
+let score = 0;
+let combo = 0;
+let comboMax = 0;
+let lives = 3;
+let wave = 1;
+let waveTimer = 0;
+let waveSpawnRate = 1.8; // embers/sec
+let missCount = 0;
+let shakeTimer = 0;
+let shakeIntensity = 0;
+let lastTime = 0;
+let auroraPhase = 0;
+
+// Orb
+const orb = {
+  x: 0, y: 0, r: 0,
+  colorIdx: 0,
+  colorName: 'red',
+  targetX: 0,
+  pulsePhase: 0,
+  crackAnim: 0, // 0-1 crack visible
+  transitionPhase: 0,
+  fromColor: null,
+  toColor: null,
+};
+
+// Collections
+let embers = [];
+let particles = [];
+let dustParticles = [];
+let comboDisplay = { scale: 1, alpha: 0, value: 0, timer: 0 };
+
+// ─── Compute layout ──────────────────────────────────────────────────────────
+function computeLayout() {
+  orb.r = W * 0.065;
+  orb.y = H - orb.r * 2.2;
+  if (orb.x === 0) orb.x = W / 2;
+  orb.targetX = orb.x;
+}
+computeLayout();
+
+// ─── Dust particles ──────────────────────────────────────────────────────────
+function initDust() {
+  dustParticles = [];
+  for (let i = 0; i < 55; i++) {
+    dustParticles.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.4 + 0.3,
+      vx: (Math.random() - 0.5) * 0.15,
+      vy: -Math.random() * 0.25 - 0.05,
+      alpha: Math.random() * 0.35 + 0.05,
+      hue: Math.random() * 60 + 10, // warm dust
+      life: 1,
+    });
+  }
+}
+
+function updateDust(dt) {
+  for (const d of dustParticles) {
+    d.x += d.vx * dt * 60;
+    d.y += d.vy * dt * 60;
+    if (d.y < -5) { d.y = H + 5; d.x = Math.random() * W; }
+    if (d.x < -5) d.x = W + 5;
+    if (d.x > W + 5) d.x = -5;
+  }
+}
+
+// ─── Ember factory ───────────────────────────────────────────────────────────
+function spawnEmber() {
+  const isWhite = Math.random() < 0.07;
+  const colorName = isWhite ? 'white' : COLOR_CYCLE[Math.floor(Math.random() * 3)];
+  const col = COLORS[colorName];
+  const speed = (W * 0.001 * (1 + wave * 0.18) + Math.random() * W * 0.0008) * 60;
+  const drift = (Math.random() - 0.5) * 0.4;
+  const size = W * 0.022 + Math.random() * W * 0.012;
+
+  // Trail history
+  const trail = [];
+  for (let i = 0; i < 8; i++) trail.push({ x: W * 0.1 + Math.random() * W * 0.8, y: -size * 2 });
+
+  embers.push({
+    x: W * 0.08 + Math.random() * W * 0.84,
+    y: -size * 2,
+    r: size,
+    vx: drift,
+    vy: speed,
+    colorName,
+    col,
+    trail,
+    trailTimer: 0,
+    pulsePhase: Math.random() * Math.PI * 2,
+    wobble: Math.random() * Math.PI * 2,
+    wobbleSpeed: (Math.random() - 0.5) * 1.5,
+    alpha: 1,
+    caught: false,
+    missed: false,
+  });
+}
+
+// ─── Particle factory ────────────────────────────────────────────────────────
+function spawnBurst(x, y, colorName, count = 24) {
+  const col = COLORS[colorName];
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+    const speed = (1.5 + Math.random() * 3.5) * (W / 520);
+    const size = (1.5 + Math.random() * 3) * (W / 520);
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1,
+      r: size,
+      alpha: 1,
+      decay: 0.025 + Math.random() * 0.025,
+      col,
+      type: 'burst',
+    });
+  }
+  // extra sparkles
+  for (let i = 0; i < 10; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = (0.5 + Math.random() * 5) * (W / 520);
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      r: (0.8 + Math.random() * 1.5) * (W / 520),
+      alpha: 1,
+      decay: 0.018 + Math.random() * 0.02,
+      col: COLORS['white'],
+      type: 'sparkle',
+    });
+  }
+}
+
+function spawnDamageParticles(x, y) {
+  for (let i = 0; i < 14; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = (1 + Math.random() * 3) * (W / 520);
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: (1 + Math.random() * 2) * (W / 520),
+      alpha: 1,
+      decay: 0.03 + Math.random() * 0.03,
+      col: COLORS['red'],
+      type: 'damage',
+    });
+  }
+}
+
+// ─── Input ───────────────────────────────────────────────────────────────────
+let pointerX = -1;
+
+canvas.addEventListener('mousemove', e => {
+  if (gameState !== 'playing') return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (W / rect.width);
+  pointerX = Math.max(orb.r, Math.min(W - orb.r, mx));
+});
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (gameState !== 'playing') return;
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches[0];
+  const mx = (touch.clientX - rect.left) * (W / rect.width);
+  pointerX = Math.max(orb.r, Math.min(W - orb.r, mx));
+}, { passive: false });
+
+let tapStartX = 0, tapStartY = 0, tapMoved = false;
+
+canvas.addEventListener('mousedown', e => {
+  const rect = canvas.getBoundingClientRect();
+  tapStartX = (e.clientX - rect.left) * (W / rect.width);
+  tapStartY = (e.clientY - rect.top) * (H / rect.height);
+  tapMoved = false;
+});
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (W / rect.width);
+  const my = (e.clientY - rect.top) * (H / rect.height);
+  if (Math.abs(mx - tapStartX) > 8 || Math.abs(my - tapStartY) > 8) tapMoved = true;
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (!tapMoved && gameState === 'playing') cycleColor();
+});
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches[0];
+  tapStartX = (t.clientX - rect.left) * (W / rect.width);
+  tapStartY = (t.clientY - rect.top) * (H / rect.height);
+  tapMoved = false;
+  pointerX = Math.max(orb.r, Math.min(W - orb.r, tapStartX));
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (!tapMoved && gameState === 'playing') cycleColor();
+}, { passive: false });
+
+function cycleColor() {
+  const prevIdx = orb.colorIdx;
+  orb.colorIdx = (orb.colorIdx + 1) % COLOR_CYCLE.length;
+  orb.colorName = COLOR_CYCLE[orb.colorIdx];
+  orb.fromColor = COLOR_CYCLE[prevIdx];
+  orb.toColor = orb.colorName;
+  orb.transitionPhase = 0;
+  // small color-change particle puff
+  spawnColorChangePuff();
+}
+
+function spawnColorChangePuff() {
+  const col = COLORS[orb.colorName];
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const sp = (0.8 + Math.random() * 1.5) * (W / 520);
+    particles.push({
+      x: orb.x, y: orb.y,
+      vx: Math.cos(angle) * sp,
+      vy: Math.sin(angle) * sp,
+      r: (1 + Math.random() * 2) * (W / 520),
+      alpha: 0.8,
+      decay: 0.04,
+      col,
+      type: 'puff',
+    });
+  }
+}
+
+// ─── Game start / reset ──────────────────────────────────────────────────────
+function startGame() {
+  score = 0;
+  combo = 0;
+  comboMax = 0;
+  lives = 3;
+  wave = 1;
+  waveTimer = 0;
+  waveSpawnRate = 1.4;
+  missCount = 0;
+  shakeTimer = 0;
+  embers = [];
+  particles = [];
+  orb.x = W / 2;
+  orb.targetX = W / 2;
+  orb.colorIdx = 0;
+  orb.colorName = 'red';
+  orb.crackAnim = 0;
+  orb.transitionPhase = 1;
+  orb.pulsePhase = 0;
+  pointerX = W / 2;
+  auroraPhase = 0;
+  initDust();
+  updateHUD();
+  overlay.classList.add('hidden');
+  gameState = 'playing';
+  document.getElementById('final-score-block').style.display = 'none';
+}
+
+startBtn.addEventListener('click', startGame);
+
+// ─── HUD ─────────────────────────────────────────────────────────────────────
+function updateHUD() {
+  document.getElementById('score-val').textContent = score.toLocaleString();
+  const mult = combo >= 2 ? `×${Math.min(combo, 8)}` : '×1';
+  document.getElementById('combo-val').textContent = mult;
+  const hearts = '❤'.repeat(lives) + '♡'.repeat(Math.max(0, 3 - lives));
+  document.getElementById('lives-val').textContent = hearts;
+  document.getElementById('wave-val').textContent = wave;
+}
+
+// ─── Game over ───────────────────────────────────────────────────────────────
+function gameOver() {
+  gameState = 'over';
+  overlay.dataset.state = 'over';
+  document.getElementById('final-score-block').style.display = 'block';
+  document.getElementById('final-score-num').textContent = score.toLocaleString();
+  document.getElementById('final-wave-num').textContent = `Wave ${wave} · Best combo ×${comboMax}`;
+  overlay.querySelector('h2').textContent = '🔥 Game Over';
+  overlay.querySelector('.subtitle').textContent = 'the storm consumes you';
+  startBtn.textContent = 'PLAY AGAIN';
+  overlay.classList.remove('hidden');
+  // big explosion
+  for (let i = 0; i < 3; i++) {
+    setTimeout(() => {
+      spawnBurst(orb.x + (Math.random()-0.5)*60, orb.y + (Math.random()-0.5)*40, COLOR_CYCLE[i % 3], 30);
+    }, i * 120);
+  }
+}
+
+// ─── Aurora background ───────────────────────────────────────────────────────
+function drawBackground() {
+  // base
+  ctx.fillStyle = '#05050f';
+  ctx.fillRect(0, 0, W, H);
+
+  // aurora bands
+  const time = auroraPhase;
+  const gradients = [
+    { y: H * 0.1, col1: `hsla(${20 + Math.sin(time*0.7)*15}, 90%, 30%, 0.06)`, col2: 'transparent' },
+    { y: H * 0.3, col1: `hsla(${200 + Math.sin(time*0.5)*30}, 80%, 25%, 0.05)`, col2: 'transparent' },
+    { y: H * 0.5, col1: `hsla(${40 + Math.cos(time*0.4)*20}, 100%, 20%, 0.04)`, col2: 'transparent' },
+  ];
+  for (const band of gradients) {
+    const g = ctx.createRadialGradient(W/2 + Math.sin(time * 0.3) * W*0.2, band.y, 0, W/2, band.y, W*0.7);
+    g.addColorStop(0, band.col1);
+    g.addColorStop(1, band.col2);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// ─── Draw dust ───────────────────────────────────────────────────────────────
+function drawDust() {
+  for (const d of dustParticles) {
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${d.hue}, 80%, 70%, ${d.alpha * 0.5})`;
+    ctx.fill();
+  }
+}
+
+// ─── Draw embers ─────────────────────────────────────────────────────────────
+function drawEmbers(t) {
+  for (const em of embers) {
+    if (em.caught || em.missed) continue;
+
+    // Trail
+    for (let i = em.trail.length - 1; i >= 0; i--) {
+      const tp = em.trail[i];
+      const frac = (em.trail.length - i) / em.trail.length;
+      const tAlpha = (1 - frac) * 0.55 * em.alpha;
+      const tR = em.r * (1 - frac * 0.75);
+      if (tAlpha < 0.01) continue;
+      const g = ctx.createRadialGradient(tp.x, tp.y, 0, tp.x, tp.y, tR * 1.4);
+      g.addColorStop(0, `rgba(${em.col.rgb[0]},${em.col.rgb[1]},${em.col.rgb[2]},${tAlpha})`);
+      g.addColorStop(1, `rgba(${em.col.rgb[0]},${em.col.rgb[1]},${em.col.rgb[2]},0)`);
+      ctx.beginPath();
+      ctx.arc(tp.x, tp.y, tR * 1.4, 0, Math.PI * 2);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+
+    // Glow aura
+    const pulse = 1 + 0.15 * Math.sin(t * 4 + em.pulsePhase);
+    const glowR = em.r * 2.4 * pulse;
+    const glowG = ctx.createRadialGradient(em.x, em.y, 0, em.x, em.y, glowR);
+    glowG.addColorStop(0, `rgba(${em.col.rgb[0]},${em.col.rgb[1]},${em.col.rgb[2]},0.45)`);
+    glowG.addColorStop(0.5, `rgba(${em.col.rgb[0]},${em.col.rgb[1]},${em.col.rgb[2]},0.15)`);
+    glowG.addColorStop(1, `rgba(${em.col.rgb[0]},${em.col.rgb[1]},${em.col.rgb[2]},0)`);
+    ctx.beginPath();
+    ctx.arc(em.x, em.y, glowR, 0, Math.PI * 2);
+    ctx.fillStyle = glowG;
+    ctx.fill();
+
+    // Core ember
+    const coreG = ctx.createRadialGradient(em.x - em.r*0.25, em.y - em.r*0.25, em.r*0.05, em.x, em.y, em.r);
+    coreG.addColorStop(0, '#ffffff');
+    coreG.addColorStop(0.3, em.col.hex);
+    coreG.addColorStop(1, em.col.trail);
+    ctx.beginPath();
+    ctx.arc(em.x, em.y, em.r * pulse, 0, Math.PI * 2);
+    ctx.fillStyle = coreG;
+    ctx.fill();
+
+    // Spark flares
+    ctx.save();
+    ctx.translate(em.x, em.y);
+    ctx.rotate(t * 1.5 + em.pulsePhase);
+    ctx.globalAlpha = 0.5 * em.alpha;
+    for (let s = 0; s < 4; s++) {
+      ctx.rotate(Math.PI / 2);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(em.r * 0.35, em.r * 1.6 * pulse);
+      ctx.lineTo(0, em.r * 1.2 * pulse);
+      ctx.lineTo(-em.r * 0.35, em.r * 1.6 * pulse);
+      ctx.closePath();
+      ctx.fillStyle = em.col.hex;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+// ─── Draw orb ────────────────────────────────────────────────────────────────
+function drawOrb(t) {
+  const col = COLORS[orb.colorName];
+  const pulse = 1 + 0.08 * Math.sin(t * 2.5 + orb.pulsePhase);
+  const r = orb.r * pulse;
+
+  ctx.save();
+  ctx.translate(orb.x, orb.y);
+
+  // Outer glow rings
+  for (let ring = 3; ring >= 1; ring--) {
+    const ringR = r * (1 + ring * 0.5);
+    const ringAlpha = 0.12 / ring;
+    const ringG = ctx.createRadialGradient(0, 0, r, 0, 0, ringR);
+    ringG.addColorStop(0, `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},${ringAlpha})`);
+    ringG.addColorStop(1, `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},0)`);
+    ctx.beginPath();
+    ctx.arc(0, 0, ringR, 0, Math.PI * 2);
+    ctx.fillStyle = ringG;
+    ctx.fill();
+  }
+
+  // Crystal body
+  const bodyG = ctx.createRadialGradient(-r*0.3, -r*0.35, r*0.05, 0, 0, r);
+  bodyG.addColorStop(0, '#ffffff');
+  bodyG.addColorStop(0.2, `rgba(${col.rgb[0]+40},${col.rgb[1]+40},${col.rgb[2]+40},0.95)`);
+  bodyG.addColorStop(0.65, col.hex);
+  bodyG.addColorStop(1, `rgba(${col.rgb[0]*0.4},${col.rgb[1]*0.4},${col.rgb[2]*0.4},0.9)`);
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = bodyG;
+  ctx.fill();
+
+  // Inner shimmer
+  ctx.beginPath();
+  ctx.arc(-r*0.22, -r*0.28, r*0.32, 0, Math.PI*2);
+  ctx.fillStyle = `rgba(255,255,255,${0.25 + 0.1 * Math.sin(t * 3)})`;
+  ctx.fill();
+
+  // Color transition overlay
+  if (orb.transitionPhase < 1 && orb.fromColor) {
+    const fromCol = COLORS[orb.fromColor];
+    const tAlpha = Math.max(0, 1 - orb.transitionPhase * 3) * 0.5;
+    if (tAlpha > 0) {
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${fromCol.rgb[0]},${fromCol.rgb[1]},${fromCol.rgb[2]},${tAlpha})`;
+      ctx.fill();
+    }
+  }
+
+  // Crack overlay if damaged
+  if (orb.crackAnim > 0) {
+    ctx.globalAlpha = orb.crackAnim * 0.7;
+    ctx.strokeStyle = '#ffffff88';
+    ctx.lineWidth = 1.2;
+    // draw some crack lines
+    const cracks = [
+      [0.1, -0.9, 0.5, 0.3],
+      [-0.3, -0.7, -0.7, 0.2],
+      [0.3, 0.1, 0.8, 0.8],
+      [-0.1, 0.2, -0.5, 0.9],
+    ];
+    for (const [x1, y1, x2, y2] of cracks) {
+      ctx.beginPath();
+      ctx.moveTo(x1 * r, y1 * r);
+      ctx.lineTo(x2 * r, y2 * r);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Rim glow
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},0.8)`;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// ─── Draw particles ──────────────────────────────────────────────────────────
+function drawParticles() {
+  for (const p of particles) {
+    if (p.alpha <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = p.alpha;
+    if (p.type === 'sparkle') {
+      ctx.fillStyle = p.col.hex;
+      ctx.shadowColor = p.col.hex;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 2);
+      g.addColorStop(0, p.col.hex);
+      g.addColorStop(1, `rgba(${p.col.rgb[0]},${p.col.rgb[1]},${p.col.rgb[2]},0)`);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * 2, 0, Math.PI * 2);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+// ─── Draw combo display ──────────────────────────────────────────────────────
+function drawCombo(t) {
+  if (comboDisplay.alpha <= 0 || combo < 2) return;
+  const mult = Math.min(combo, 8);
+  ctx.save();
+  ctx.globalAlpha = comboDisplay.alpha;
+  ctx.translate(orb.x, orb.y - orb.r * 2.2);
+  ctx.scale(comboDisplay.scale, comboDisplay.scale);
+  ctx.textAlign = 'center';
+  ctx.font = `bold ${Math.round(W * 0.045)}px 'Courier New', monospace`;
+  const col = COLORS[orb.colorName];
+  ctx.fillStyle = col.hex;
+  ctx.shadowColor = col.hex;
+  ctx.shadowBlur = 16;
+  ctx.fillText(`×${mult} COMBO`, 0, 0);
+  ctx.restore();
+}
+
+// ─── Update ───────────────────────────────────────────────────────────────────
+function update(dt, t) {
+  // Always update ambient effects
+  auroraPhase += dt * 0.4;
+  updateDust(dt);
+
+  if (gameState !== 'playing') return;
+
+
+  orb.pulsePhase += dt * 2.5;
+
+  // Smooth orb movement
+  if (pointerX >= 0) orb.targetX = pointerX;
+  orb.x += (orb.targetX - orb.x) * Math.min(1, dt * 14);
+  orb.x = Math.max(orb.r, Math.min(W - orb.r, orb.x));
+
+  // Transition
+  orb.transitionPhase = Math.min(1, orb.transitionPhase + dt * 5);
+
+  // Crack animation decay
+  orb.crackAnim = Math.max(0, orb.crackAnim - dt * 1.2);
+
+  // Combo display
+  if (combo >= 2) {
+    comboDisplay.alpha = Math.min(1, comboDisplay.alpha + dt * 4);
+    comboDisplay.scale = 1 + 0.08 * Math.sin(t * 6);
+  } else {
+    comboDisplay.alpha = Math.max(0, comboDisplay.alpha - dt * 3);
+  }
+
+  // Wave spawning
+  waveTimer += dt;
+  const spawnInterval = 1 / waveSpawnRate;
+  if (waveTimer >= spawnInterval) {
+    waveTimer -= spawnInterval;
+    spawnEmber();
+    // occasionally double spawn at higher waves
+    if (wave >= 4 && Math.random() < 0.3) spawnEmber();
+    if (wave >= 8 && Math.random() < 0.25) spawnEmber();
+  }
+
+  // Advance wave every 20 seconds
+  // (use frame count approach)
+  // Wave advances on reaching score thresholds
+  const waveThreshold = wave * 180;
+  if (score >= waveThreshold) {
+    wave++;
+    waveSpawnRate = Math.min(4.5, 1.4 + wave * 0.22);
+    updateHUD();
+  }
+
+  // Shake
+  if (shakeTimer > 0) shakeTimer = Math.max(0, shakeTimer - dt);
+
+  // Update embers
+  for (const em of embers) {
+    if (em.caught || em.missed) continue;
+
+    // Store trail
+    em.trailTimer += dt;
+    if (em.trailTimer > 0.025) {
+      em.trailTimer = 0;
+      em.trail.unshift({ x: em.x, y: em.y });
+      if (em.trail.length > 8) em.trail.pop();
+    }
+
+    em.wobble += em.wobbleSpeed * dt;
+    em.x += (em.vx + Math.sin(em.wobble) * 0.3) * dt * 60 * (W / 520);
+    em.y += em.vy * dt * (H / 720);
+
+    // Bounce off sides
+    if (em.x < em.r) { em.x = em.r; em.vx = Math.abs(em.vx); }
+    if (em.x > W - em.r) { em.x = W - em.r; em.vx = -Math.abs(em.vx); }
+
+    // Catch check
+    const dx = em.x - orb.x;
+    const dy = em.y - orb.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < orb.r + em.r * 0.9) {
+      em.caught = true;
+      const match = em.colorName === 'white' || em.colorName === orb.colorName;
+      if (match) {
+        combo++;
+        if (combo > comboMax) comboMax = combo;
+        const multiplier = Math.min(combo, 8);
+        const pts = em.colorName === 'white' ? 50 * multiplier : 20 * multiplier;
+        score += pts;
+        spawnBurst(em.x, em.y, em.colorName === 'white' ? orb.colorName : em.colorName, 24 + combo * 2);
+      } else {
+        combo = 0;
+        lives--;
+        shakeTimer = 0.35;
+        shakeIntensity = 8 * (W / 520);
+        orb.crackAnim = 1;
+        spawnDamageParticles(orb.x, orb.y);
+        if (lives <= 0) { updateHUD(); gameOver(); return; }
+      }
+      updateHUD();
+    }
+
+    // Miss (off screen)
+    if (em.y > H + em.r * 2) {
+      em.missed = true;
+    }
+  }
+
+  // Clean up caught/missed
+  embers = embers.filter(e => !e.caught && !e.missed);
+
+  // Update particles
+  for (const p of particles) {
+    p.x += p.vx * dt * 60 * (W / 520);
+    p.y += p.vy * dt * 60 * (W / 520);
+    p.vy += 0.06 * dt * 60; // gravity
+    p.alpha -= p.decay * dt * 60;
+  }
+  particles = particles.filter(p => p.alpha > 0);
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+function render(t) {
+  ctx.save();
+
+  // Screen shake
+  if (shakeTimer > 0) {
+    const shk = shakeTimer * shakeIntensity;
+    ctx.translate(
+      (Math.random() - 0.5) * shk,
+      (Math.random() - 0.5) * shk
+    );
+  }
+
+  drawBackground();
+  drawDust();
+
+  if (gameState === 'playing' || gameState === 'over') {
+    drawParticles();
+    drawEmbers(t);
+    if (gameState === 'playing') {
+      drawOrb(t);
+      drawCombo(t);
+    }
+  }
+
+  ctx.restore();
+}
+
+// ─── Main loop ───────────────────────────────────────────────────────────────
+function loop(ts) {
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+  const t = ts / 1000;
+
+  update(dt, t);
+  render(t);
+
+  requestAnimationFrame(loop);
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+computeLayout();
+initDust();
+
+window.addEventListener('resize', () => {
+  resize();
+  computeLayout();
+});
+
+requestAnimationFrame(ts => {
+  lastTime = ts;
+  requestAnimationFrame(loop);
+});
+
+})();
+</script>
+</body>
+</html>
