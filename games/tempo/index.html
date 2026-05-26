@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Tempo — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+
+canvas { display: block; }
+
+#hud {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  text-align: right;
+  z-index: 100;
+  font-size: 14px;
+  line-height: 1.6;
+  text-shadow: 0 0 8px rgba(150,100,255,0.5);
+  pointer-events: none;
+}
+#hud .score { font-size: 28px; font-weight: bold; color: #ff6ec7; }
+#hud .combo { color: #ffd700; font-size: 16px; }
+#hud .lives { font-size: 18px; }
+#hud .level { color: #00e5ff; font-size: 13px; }
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10,10,26,0.94);
+  z-index: 200;
+  transition: opacity 0.4s;
+}
+#overlay.hidden { opacity: 0; pointer-events: none; }
+
+#overlay h1 {
+  font-size: 52px;
+  background: linear-gradient(135deg, #ff6ec7, #6040cc, #00e5ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+}
+#overlay .sub {
+  color: #999;
+  font-size: 14px;
+  margin-bottom: 28px;
+  text-align: center;
+  max-width: 320px;
+  line-height: 1.5;
+}
+#overlay .final-score {
+  font-size: 22px;
+  color: #ff6ec7;
+  margin-bottom: 16px;
+  display: none;
+}
+.btn {
+  padding: 14px 48px;
+  font-size: 16px;
+  font-family: inherit;
+  background: linear-gradient(135deg, #6040cc, #ff6ec7);
+  color: #fff;
+  border: none;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.2s;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+.btn:hover { transform: scale(1.05); box-shadow: 0 0 30px rgba(150,100,255,0.5); }
+
+.rating {
+  font-size: 32px;
+  margin-bottom: 8px;
+  opacity: 0;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 300;
+  pointer-events: none;
+  text-shadow: 0 0 20px currentColor;
+  transition: none;
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div class="score" id="scoreEl">0</div>
+  <div class="combo" id="comboEl"></div>
+  <div class="lives" id="livesEl"></div>
+  <div class="level" id="levelEl"></div>
+</div>
+
+<div id="overlay">
+  <h1>TEMPO</h1>
+  <div class="sub">Rings expand outward. Tap when they align with the target circle. Chain perfect hits for combos.</div>
+  <div class="final-score" id="finalScore"></div>
+  <button class="btn" id="startBtn">START</button>
+</div>
+
+<div class="rating" id="ratingEl"></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const scoreEl = document.getElementById('scoreEl');
+const comboEl = document.getElementById('comboEl');
+const livesEl = document.getElementById('livesEl');
+const levelEl = document.getElementById('levelEl');
+const finalScoreEl = document.getElementById('finalScore');
+const ratingEl = document.getElementById('ratingEl');
+
+let W, H, cx, cy;
+let playing = false;
+let score = 0;
+let combo = 0;
+let bestCombo = 0;
+let lives = 5;
+let level = 1;
+let targetRadius;
+let rings = [];
+let particles = [];
+let bgPulse = 0;
+let bgHue = 0;
+let spawnTimer = 0;
+let spawnInterval = 1.8;
+let ringSpeed = 2.2;
+let lastTime = 0;
+let shakeAmount = 0;
+let beatFlash = 0;
+
+// Audio context for sound effects
+let audioCtx;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playTone(freq, dur, type = 'sine', vol = 0.15) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + dur);
+}
+
+function playHit(perfect) {
+  if (perfect) {
+    playTone(880, 0.15, 'sine', 0.12);
+    setTimeout(() => playTone(1320, 0.1, 'sine', 0.08), 50);
+  } else {
+    playTone(660, 0.12, 'triangle', 0.1);
+  }
+}
+
+function playMiss() {
+  playTone(150, 0.3, 'sawtooth', 0.08);
+}
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  cx = W / 2;
+  cy = H / 2;
+  targetRadius = Math.min(W, H) * 0.28;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const COLORS = [
+  '#ff6ec7', '#00e5ff', '#ffd700', '#ff4444',
+  '#6040cc', '#00ff88', '#ff8c00', '#e040fb'
+];
+
+function spawnRing() {
+  const colorIdx = Math.floor(Math.random() * COLORS.length);
+  const angle = Math.random() * Math.PI * 2;
+  // Some rings spawn from outside (shrinking in)
+  const fromOutside = Math.random() < 0.25 && level >= 3;
+  rings.push({
+    radius: fromOutside ? targetRadius * 2.5 : 0,
+    color: COLORS[colorIdx],
+    speed: ringSpeed * (0.85 + Math.random() * 0.3) * (fromOutside ? -1 : 1),
+    thickness: 3,
+    opacity: 1,
+    hit: false,
+    missed: false,
+    angle,
+    pulse: 0
+  });
+}
+
+function spawnParticles(x, y, color, count, speed) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const v = speed * (0.3 + Math.random() * 0.7);
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * v,
+      vy: Math.sin(a) * v,
+      life: 1,
+      decay: 0.015 + Math.random() * 0.02,
+      color,
+      size: 2 + Math.random() * 4
+    });
+  }
+}
+
+function spawnRingBurst(radius, color) {
+  const segments = 24 + combo * 4;
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    const px = cx + Math.cos(a) * radius;
+    const py = cy + Math.sin(a) * radius;
+    spawnParticles(px, py, color, 2, 3 + combo * 0.5);
+  }
+}
+
+function showRating(text, color) {
+  ratingEl.textContent = text;
+  ratingEl.style.color = color;
+  ratingEl.style.opacity = 1;
+  ratingEl.style.transition = 'none';
+  ratingEl.style.transform = 'translate(-50%, -50%) scale(1.3)';
+  requestAnimationFrame(() => {
+    ratingEl.style.transition = 'opacity 0.6s, transform 0.6s';
+    ratingEl.style.opacity = 0;
+    ratingEl.style.transform = 'translate(-50%, -70%) scale(0.8)';
+  });
+}
+
+function hitRing(ring) {
+  const diff = Math.abs(ring.radius - targetRadius);
+  const tolerance = targetRadius * 0.15;
+  const perfectTolerance = targetRadius * 0.05;
+
+  if (diff < perfectTolerance) {
+    // Perfect
+    combo++;
+    bestCombo = Math.max(bestCombo, combo);
+    const pts = 100 * (1 + combo * 0.5);
+    score += Math.round(pts);
+    ring.hit = true;
+    beatFlash = 1;
+    bgPulse = 0.5;
+    spawnRingBurst(ring.radius, ring.color);
+    showRating('PERFECT ✦', '#ffd700');
+    playHit(true);
+  } else if (diff < tolerance) {
+    // Good
+    combo++;
+    bestCombo = Math.max(bestCombo, combo);
+    const pts = 50 * (1 + combo * 0.3);
+    score += Math.round(pts);
+    ring.hit = true;
+    bgPulse = 0.2;
+    spawnParticles(cx, cy, ring.color, 20, 4);
+    showRating('GOOD', '#00e5ff');
+    playHit(false);
+  } else {
+    // Miss - tapped too early or too late
+    combo = 0;
+    lives--;
+    shakeAmount = 8;
+    ring.missed = true;
+    showRating('MISS', '#ff4444');
+    playMiss();
+  }
+}
+
+function handleTap() {
+  if (!playing) return;
+
+  // Find the ring closest to targetRadius
+  let best = null;
+  let bestDist = Infinity;
+  for (const r of rings) {
+    if (r.hit || r.missed) continue;
+    const d = Math.abs(r.radius - targetRadius);
+    if (d < bestDist) {
+      bestDist = d;
+      best = r;
+    }
+  }
+
+  if (best && bestDist < targetRadius * 0.35) {
+    hitRing(best);
+  } else {
+    // Nothing close — penalty tap
+    combo = 0;
+    lives--;
+    shakeAmount = 5;
+    showRating('MISS', '#ff4444');
+    playMiss();
+  }
+
+  updateHUD();
+  if (lives <= 0) gameOver();
+}
+
+canvas.addEventListener('click', handleTap);
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleTap(); });
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); handleTap(); }
+});
+
+function updateHUD() {
+  scoreEl.textContent = score;
+  comboEl.textContent = combo > 1 ? `${combo}x COMBO` : '';
+  livesEl.textContent = '♡'.repeat(Math.max(0, lives));
+  levelEl.textContent = `LEVEL ${level}`;
+}
+
+function startGame() {
+  initAudio();
+  playing = true;
+  score = 0;
+  combo = 0;
+  bestCombo = 0;
+  lives = 5;
+  level = 1;
+  rings = [];
+  particles = [];
+  spawnTimer = 0;
+  spawnInterval = 1.8;
+  ringSpeed = 2.2;
+  shakeAmount = 0;
+  beatFlash = 0;
+  overlay.classList.add('hidden');
+  finalScoreEl.style.display = 'none';
+  updateHUD();
+  lastTime = performance.now();
+  requestAnimationFrame(gameLoop);
+}
+
+function gameOver() {
+  playing = false;
+  overlay.classList.remove('hidden');
+  overlay.querySelector('h1').textContent = 'GAME OVER';
+  overlay.querySelector('.sub').textContent = `Best combo: ${bestCombo}x · Level ${level}`;
+  finalScoreEl.textContent = `Score: ${score}`;
+  finalScoreEl.style.display = 'block';
+  startBtn.textContent = 'RETRY';
+}
+
+startBtn.addEventListener('click', startGame);
+
+function drawTargetCircle(t) {
+  // Outer glow
+  const glowAlpha = 0.08 + bgPulse * 0.15 + Math.sin(t * 2) * 0.03;
+  ctx.beginPath();
+  ctx.arc(cx, cy, targetRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(150, 100, 255, ${glowAlpha})`;
+  ctx.lineWidth = 20;
+  ctx.stroke();
+
+  // Main circle
+  ctx.beginPath();
+  ctx.arc(cx, cy, targetRadius, 0, Math.PI * 2);
+  const pulse = 0.3 + bgPulse * 0.4 + Math.sin(t * 3) * 0.05;
+  ctx.strokeStyle = `rgba(150, 100, 255, ${pulse})`;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 12]);
+  ctx.lineDashOffset = -t * 30;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Corner markers
+  const markerLen = 12;
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + t * 0.3;
+    const mx = cx + Math.cos(a) * targetRadius;
+    const my = cy + Math.sin(a) * targetRadius;
+    ctx.beginPath();
+    ctx.arc(mx, my, 3, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(150, 100, 255, ${0.5 + Math.sin(t * 4 + i) * 0.3})`;
+    ctx.fill();
+  }
+}
+
+function drawRing(ring) {
+  if (ring.radius < 0) return;
+  const alpha = ring.hit ? ring.opacity * 0.3 : ring.missed ? ring.opacity * 0.5 : ring.opacity;
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.abs(ring.radius), 0, Math.PI * 2);
+  ctx.strokeStyle = ring.color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = ring.hit ? ring.thickness + ring.pulse * 8 : ring.thickness;
+  ctx.shadowColor = ring.color;
+  ctx.shadowBlur = ring.hit ? 30 : 8;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = p.life * 0.8;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 6;
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
+function drawBackground(t) {
+  // Dark base with subtle animated gradient
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H) * 0.7);
+  const hue = (bgHue + beatFlash * 30) % 360;
+  grad.addColorStop(0, `hsla(${hue}, 60%, ${4 + bgPulse * 8}%, 1)`);
+  grad.addColorStop(0.5, `hsla(${hue + 30}, 50%, ${2 + bgPulse * 3}%, 1)`);
+  grad.addColorStop(1, '#0a0a1a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle grid
+  ctx.strokeStyle = `rgba(100, 60, 200, ${0.03 + bgPulse * 0.02})`;
+  ctx.lineWidth = 0.5;
+  const gridSize = 60;
+  const ox = (t * 10) % gridSize;
+  for (let x = -gridSize + ox; x < W + gridSize; x += gridSize) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+  for (let y = -gridSize + ox; y < H + gridSize; y += gridSize) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+}
+
+function gameLoop(now) {
+  if (!playing) return;
+
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  const t = now / 1000;
+
+  // Level progression
+  const newLevel = Math.min(10, 1 + Math.floor(score / 500));
+  if (newLevel > level) {
+    level = newLevel;
+    spawnInterval = Math.max(0.5, 1.8 - level * 0.12);
+    ringSpeed = 2.2 + level * 0.3;
+    updateHUD();
+  }
+
+  // Spawn rings
+  spawnTimer += dt;
+  if (spawnTimer >= spawnInterval) {
+    spawnTimer = 0;
+    spawnRing();
+    // Double rings at higher levels
+    if (level >= 5 && Math.random() < 0.3) {
+      setTimeout(spawnRing, 200);
+    }
+  }
+
+  // Update rings
+  for (const r of rings) {
+    if (r.hit) {
+      r.pulse += dt * 3;
+      r.opacity -= dt * 2;
+      r.radius += r.speed * dt * 60 * 0.5;
+    } else if (r.missed) {
+      r.opacity -= dt * 3;
+    } else {
+      r.radius += r.speed * dt * 60;
+      // Missed — ring passed through target without being hit
+      if (r.speed > 0 && r.radius > targetRadius * 1.4) {
+        r.missed = true;
+        combo = 0;
+        lives--;
+        shakeAmount = 4;
+        updateHUD();
+        if (lives <= 0) { gameOver(); return; }
+      } else if (r.speed < 0 && r.radius < targetRadius * 0.6) {
+        r.missed = true;
+        combo = 0;
+        lives--;
+        shakeAmount = 4;
+        updateHUD();
+        if (lives <= 0) { gameOver(); return; }
+      }
+    }
+  }
+
+  // Clean up
+  rings = rings.filter(r => r.opacity > 0);
+
+  // Update particles
+  for (const p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.97;
+    p.vy *= 0.97;
+    p.life -= p.decay;
+  }
+  particles = particles.filter(p => p.life > 0);
+
+  // Decay effects
+  bgPulse *= 0.95;
+  bgHue += dt * 15;
+  shakeAmount *= 0.9;
+  beatFlash *= 0.92;
+
+  // Draw
+  ctx.save();
+  if (shakeAmount > 0.5) {
+    ctx.translate(
+      (Math.random() - 0.5) * shakeAmount,
+      (Math.random() - 0.5) * shakeAmount
+    );
+  }
+
+  drawBackground(t);
+  drawTargetCircle(t);
+
+  for (const r of rings) drawRing(r);
+  drawParticles();
+
+  // Center dot
+  const dotPulse = 3 + Math.sin(t * 4) * 1 + bgPulse * 5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, dotPulse, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(150, 100, 255, ${0.4 + bgPulse * 0.4})`;
+  ctx.fill();
+
+  ctx.restore();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// Start the visual background immediately
+function idleLoop(now) {
+  if (playing) return;
+  const t = now / 1000;
+  bgHue += 0.05;
+  drawBackground(t);
+  drawTargetCircle(t);
+
+  // Idle center pulse
+  const dotPulse = 3 + Math.sin(t * 2) * 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, dotPulse, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(150, 100, 255, 0.3)';
+  ctx.fill();
+
+  requestAnimationFrame(idleLoop);
+}
+requestAnimationFrame(idleLoop);
+</script>
+</body>
+</html>
