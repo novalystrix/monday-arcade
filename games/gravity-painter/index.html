@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Gravity Painter — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #080810;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  min-height: 100dvh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #4040aa;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  transition: color 0.2s;
+}
+.back-link:hover { color: #00d4ff; }
+.hud {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 500px;
+  padding: 40px 12px 6px;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  z-index: 10;
+}
+.hud-round { color: #c084fc; }
+.hud-score { color: #39ff14; }
+.hud-wells { color: #00d4ff; }
+canvas {
+  border: 1px solid #1a1a4a;
+  box-shadow: 0 0 60px rgba(100,50,255,0.15), 0 0 120px rgba(0,212,255,0.08);
+  border-radius: 4px;
+  touch-action: none;
+  cursor: crosshair;
+}
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4,4,10,0.92);
+  z-index: 50;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+.overlay.active { opacity: 1; pointer-events: all; }
+.overlay h1 {
+  font-size: 1.8rem;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, #c084fc, #00d4ff, #39ff14);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.overlay h2 {
+  font-size: 1.1rem;
+  color: #8888cc;
+  margin-bottom: 4px;
+  font-weight: normal;
+}
+.overlay .subtitle {
+  color: #6666aa;
+  font-size: 0.75rem;
+  margin-bottom: 20px;
+  text-align: center;
+  line-height: 1.5;
+  max-width: 320px;
+}
+.overlay .score-display {
+  font-size: 2.5rem;
+  color: #39ff14;
+  margin: 12px 0;
+  text-shadow: 0 0 20px rgba(57,255,20,0.5);
+}
+.btn {
+  padding: 12px 32px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  border: 1px solid #4040aa;
+  background: rgba(60,30,120,0.3);
+  color: #c084fc;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.25s;
+  margin-top: 8px;
+}
+.btn:hover { background: rgba(100,50,200,0.4); border-color: #00d4ff; color: #fff; box-shadow: 0 0 20px rgba(0,212,255,0.3); }
+.launch-btn {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 14px 40px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  border: 2px solid #c084fc;
+  background: rgba(100,30,200,0.25);
+  color: #e0b0ff;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: none;
+  animation: pulse-btn 2s ease-in-out infinite;
+}
+.launch-btn:hover { background: rgba(140,60,255,0.4); border-color: #00d4ff; color: #fff; box-shadow: 0 0 30px rgba(192,132,252,0.4); }
+.launch-btn.visible { display: block; }
+@keyframes pulse-btn {
+  0%, 100% { box-shadow: 0 0 10px rgba(192,132,252,0.2); }
+  50% { box-shadow: 0 0 25px rgba(192,132,252,0.5), 0 0 50px rgba(0,212,255,0.15); }
+}
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+<div class="hud">
+  <span class="hud-round" id="hud-round">Round 1/5</span>
+  <span class="hud-score" id="hud-score">Score: 0%</span>
+  <span class="hud-wells" id="hud-wells">Wells: 5</span>
+</div>
+<canvas id="c"></canvas>
+<button class="launch-btn" id="launch-btn">🚀 Launch Particles</button>
+
+<div class="overlay active" id="start-overlay">
+  <h1>🌌 Gravity Painter</h1>
+  <h2>Paint with physics</h2>
+  <div class="subtitle">
+    Tap to place gravity wells, then launch particles.<br>
+    Watch them orbit and paint neon trails across the void.<br>
+    5 rounds — paint as much canvas as you can.
+  </div>
+  <button class="btn" id="start-btn">Begin</button>
+</div>
+
+<div class="overlay" id="round-overlay">
+  <h2 id="round-title">Round Complete</h2>
+  <div class="score-display" id="round-score">0%</div>
+  <div class="subtitle" id="round-sub">Canvas coverage this round</div>
+  <button class="btn" id="next-btn">Next Round</button>
+</div>
+
+<div class="overlay" id="end-overlay">
+  <h1>Masterpiece Complete</h1>
+  <div class="score-display" id="final-score">0%</div>
+  <div class="subtitle">Total canvas painted across 5 rounds</div>
+  <button class="btn" id="restart-btn">Paint Again</button>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const launchBtn = document.getElementById('launch-btn');
+const startOverlay = document.getElementById('start-overlay');
+const roundOverlay = document.getElementById('round-overlay');
+const endOverlay = document.getElementById('end-overlay');
+
+// Sizing
+let W, H;
+function resize() {
+  const maxW = Math.min(window.innerWidth - 16, 500);
+  const maxH = window.innerHeight - 110;
+  const s = Math.min(maxW, maxH);
+  W = canvas.width = s;
+  H = canvas.height = s;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Game state
+const MAX_WELLS = 5;
+const MAX_ROUNDS = 5;
+const PARTICLE_COUNT = 30;
+const SIM_TIME = 9; // seconds per launch
+
+let wells = [];
+let particles = [];
+let stars = [];
+let sparks = [];
+let round = 0;
+let totalCoverage = 0;
+let phase = 'start'; // start, placing, simulating, round-end, game-end
+let simTimer = 0;
+let coverageMap = null; // Uint8Array for pixel coverage
+
+// Neon palette
+const NEON = ['#00d4ff','#c084fc','#39ff14','#ff6b9d','#ffbe0b','#ff006e','#06d6a0','#f72585'];
+const WELL_COLORS = ['#c084fc','#00d4ff','#ff6b9d','#ffbe0b','#06d6a0'];
+
+// Stars
+function initStars() {
+  stars = [];
+  for (let i = 0; i < 200; i++) {
+    stars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.2 + 0.2,
+      a: Math.random() * 0.5 + 0.1,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 2 + 1
+    });
+  }
+}
+
+// Coverage tracking
+function initCoverage() {
+  const gridW = Math.ceil(W / 4);
+  const gridH = Math.ceil(H / 4);
+  coverageMap = new Uint8Array(gridW * gridH);
+}
+function markCoverage(x, y, radius) {
+  const gridW = Math.ceil(W / 4);
+  const gridH = Math.ceil(H / 4);
+  const gx = Math.floor(x / 4);
+  const gy = Math.floor(y / 4);
+  const gr = Math.max(1, Math.floor(radius / 4));
+  for (let dy = -gr; dy <= gr; dy++) {
+    for (let dx = -gr; dx <= gr; dx++) {
+      const px = gx + dx, py = gy + dy;
+      if (px >= 0 && px < gridW && py >= 0 && py < gridH && dx*dx+dy*dy <= gr*gr) {
+        coverageMap[py * gridW + px] = 1;
+      }
+    }
+  }
+}
+function getCoverage() {
+  if (!coverageMap) return 0;
+  let filled = 0;
+  for (let i = 0; i < coverageMap.length; i++) if (coverageMap[i]) filled++;
+  return filled / coverageMap.length;
+}
+
+// Trail canvas (persistent painting)
+const trailCanvas = document.createElement('canvas');
+const trailCtx = trailCanvas.getContext('2d');
+
+function initTrailCanvas() {
+  trailCanvas.width = W;
+  trailCanvas.height = H;
+  trailCtx.clearRect(0, 0, W, H);
+}
+
+// Wells
+function addWell(x, y) {
+  if (wells.length >= MAX_WELLS || phase !== 'placing') return;
+  const mass = 800 + Math.random() * 1200;
+  wells.push({
+    x, y, mass,
+    color: WELL_COLORS[wells.length % WELL_COLORS.length],
+    pulse: 0,
+    born: performance.now()
+  });
+  document.getElementById('hud-wells').textContent = `Wells: ${MAX_WELLS - wells.length}`;
+  if (wells.length > 0) launchBtn.classList.add('visible');
+}
+
+// Particles
+function spawnParticles() {
+  particles = [];
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    let x, y, vx, vy;
+    const side = Math.floor(Math.random() * 4);
+    const speed = 60 + Math.random() * 80;
+    if (side === 0) { x = Math.random() * W; y = -5; vx = (Math.random()-0.5)*40; vy = speed; }
+    else if (side === 1) { x = W+5; y = Math.random() * H; vx = -speed; vy = (Math.random()-0.5)*40; }
+    else if (side === 2) { x = Math.random() * W; y = H+5; vx = (Math.random()-0.5)*40; vy = -speed; }
+    else { x = -5; y = Math.random() * H; vx = speed; vy = (Math.random()-0.5)*40; }
+    const hue = (i / PARTICLE_COUNT) * 360;
+    particles.push({
+      x, y, vx, vy, px: x, py: y,
+      hue, life: 1, trail: [],
+      color: NEON[i % NEON.length],
+      size: 2 + Math.random() * 2
+    });
+  }
+}
+
+// Sparks (close-pass effects)
+function spawnSpark(x, y, color) {
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 30 + Math.random() * 60;
+    sparks.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      color,
+      size: 1 + Math.random() * 2
+    });
+  }
+}
+
+// Physics
+function simulate(dt) {
+  const G = 50000;
+  for (const p of particles) {
+    if (p.life <= 0) continue;
+    p.px = p.x; p.py = p.y;
+    let ax = 0, ay = 0;
+    for (const w of wells) {
+      const dx = w.x - p.x, dy = w.y - p.y;
+      const dist2 = dx*dx + dy*dy;
+      const dist = Math.sqrt(dist2);
+      const minDist = 15;
+      if (dist < minDist) {
+        // Close pass — spark!
+        if (Math.random() < 0.3) spawnSpark(p.x, p.y, w.color);
+        const f = G * w.mass / (minDist * minDist * minDist);
+        ax += dx / dist * f * 0.5;
+        ay += dy / dist * f * 0.5;
+      } else {
+        const f = G * w.mass / (dist2 * dist);
+        ax += dx * f;
+        ay += dy * f;
+      }
+    }
+    p.vx += ax * dt;
+    p.vy += ay * dt;
+    // Speed limit
+    const spd = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+    if (spd > 500) { p.vx *= 500/spd; p.vy *= 500/spd; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    // Wrap edges softly
+    if (p.x < -50) p.x = W + 50;
+    if (p.x > W + 50) p.x = -50;
+    if (p.y < -50) p.y = H + 50;
+    if (p.y > H + 50) p.y = -50;
+    // Draw trail on persistent canvas
+    const vel = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+    const trailHue = (p.hue + vel * 0.3) % 360;
+    const alpha = Math.min(0.6, 0.15 + vel * 0.001) * p.life;
+    trailCtx.strokeStyle = `hsla(${trailHue}, 100%, 65%, ${alpha})`;
+    trailCtx.lineWidth = p.size * p.life;
+    trailCtx.lineCap = 'round';
+    trailCtx.beginPath();
+    trailCtx.moveTo(p.px, p.py);
+    trailCtx.lineTo(p.x, p.y);
+    trailCtx.stroke();
+    // Glow layer
+    trailCtx.strokeStyle = `hsla(${trailHue}, 100%, 80%, ${alpha * 0.3})`;
+    trailCtx.lineWidth = p.size * p.life * 3;
+    trailCtx.beginPath();
+    trailCtx.moveTo(p.px, p.py);
+    trailCtx.lineTo(p.x, p.y);
+    trailCtx.stroke();
+    // Coverage
+    if (p.x >= 0 && p.x < W && p.y >= 0 && p.y < H) {
+      markCoverage(p.x, p.y, p.size * 2);
+    }
+  }
+  // Sparks
+  for (const s of sparks) {
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.life -= dt * 2;
+    s.vx *= 0.96;
+    s.vy *= 0.96;
+  }
+  sparks = sparks.filter(s => s.life > 0);
+}
+
+// Rendering
+function drawStars(t) {
+  for (const s of stars) {
+    const twinkle = Math.sin(t * s.speed + s.twinkle) * 0.3 + 0.7;
+    ctx.globalAlpha = s.a * twinkle;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawWells(t) {
+  for (const w of wells) {
+    const pulse = Math.sin(t * 3 + w.born * 0.001) * 0.3 + 0.7;
+    const baseR = 8 + w.mass * 0.012;
+    // Outer glow
+    const grad = ctx.createRadialGradient(w.x, w.y, 0, w.x, w.y, baseR * 3);
+    grad.addColorStop(0, w.color + '40');
+    grad.addColorStop(0.5, w.color + '15');
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, baseR * 3, 0, Math.PI*2);
+    ctx.fill();
+    // Rings
+    for (let r = 0; r < 3; r++) {
+      const ringR = baseR * (1 + r * 0.6) * pulse;
+      ctx.strokeStyle = w.color + (r === 0 ? 'cc' : r === 1 ? '66' : '33');
+      ctx.lineWidth = 1.5 - r * 0.4;
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, ringR, 0, Math.PI*2);
+      ctx.stroke();
+    }
+    // Core
+    ctx.fillStyle = w.color;
+    ctx.shadowColor = w.color;
+    ctx.shadowBlur = 15 * pulse;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, 3 + pulse * 2, 0, Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    if (p.life <= 0) continue;
+    const vel = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+    const hue = (p.hue + vel * 0.3) % 360;
+    ctx.fillStyle = `hsla(${hue}, 100%, 70%, ${p.life})`;
+    ctx.shadowColor = `hsla(${hue}, 100%, 70%, 0.8)`;
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawSparks() {
+  for (const s of sparks) {
+    ctx.globalAlpha = s.life;
+    ctx.fillStyle = s.color;
+    ctx.shadowColor = s.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.size * s.life, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
+// Animation
+let lastTime = 0;
+function loop(time) {
+  const t = time * 0.001;
+  const dt = Math.min(0.033, (time - lastTime) * 0.001);
+  lastTime = time;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = '#080810';
+  ctx.fillRect(0, 0, W, H);
+  drawStars(t);
+
+  // Persistent trails
+  ctx.drawImage(trailCanvas, 0, 0);
+
+  if (phase === 'simulating') {
+    simulate(dt);
+    simTimer -= dt;
+    // Fade particles near end
+    if (simTimer < 2) {
+      for (const p of particles) p.life = Math.max(0, simTimer / 2);
+    }
+    if (simTimer <= 0) endRound();
+  }
+
+  drawWells(t);
+  drawParticles();
+  drawSparks();
+
+  // Placing phase hint
+  if (phase === 'placing' && wells.length === 0) {
+    ctx.fillStyle = 'rgba(100,100,180,0.4)';
+    ctx.font = '13px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('tap to place gravity wells', W/2, H/2);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+// Game flow
+function startGame() {
+  round = 0;
+  totalCoverage = 0;
+  initCoverage();
+  initTrailCanvas();
+  initStars();
+  startOverlay.classList.remove('active');
+  nextRound();
+}
+
+function nextRound() {
+  round++;
+  wells = [];
+  particles = [];
+  sparks = [];
+  phase = 'placing';
+  document.getElementById('hud-round').textContent = `Round ${round}/${MAX_ROUNDS}`;
+  document.getElementById('hud-score').textContent = `Score: ${(totalCoverage * 100).toFixed(1)}%`;
+  document.getElementById('hud-wells').textContent = `Wells: ${MAX_WELLS}`;
+  launchBtn.classList.remove('visible');
+  roundOverlay.classList.remove('active');
+}
+
+function launchParticles() {
+  if (phase !== 'placing' || wells.length === 0) return;
+  phase = 'simulating';
+  simTimer = SIM_TIME;
+  launchBtn.classList.remove('visible');
+  spawnParticles();
+}
+
+function endRound() {
+  phase = 'round-end';
+  particles = [];
+  totalCoverage = getCoverage();
+  const pct = (totalCoverage * 100).toFixed(1);
+  document.getElementById('hud-score').textContent = `Score: ${pct}%`;
+
+  if (round >= MAX_ROUNDS) {
+    document.getElementById('final-score').textContent = `${pct}%`;
+    endOverlay.classList.add('active');
+    phase = 'game-end';
+  } else {
+    document.getElementById('round-title').textContent = `Round ${round} Complete`;
+    document.getElementById('round-score').textContent = `${pct}%`;
+    document.getElementById('round-sub').textContent = 'Cumulative canvas coverage';
+    roundOverlay.classList.add('active');
+  }
+}
+
+// Input
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (W / rect.width);
+  const y = (e.clientY - rect.top) * (H / rect.height);
+  addWell(x, y);
+});
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches[0];
+  const x = (touch.clientX - rect.left) * (W / rect.width);
+  const y = (touch.clientY - rect.top) * (H / rect.height);
+  addWell(x, y);
+}, { passive: false });
+
+launchBtn.addEventListener('click', launchParticles);
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('next-btn').addEventListener('click', nextRound);
+document.getElementById('restart-btn').addEventListener('click', () => {
+  endOverlay.classList.remove('active');
+  startGame();
+});
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && phase === 'placing' && wells.length > 0) {
+    e.preventDefault();
+    launchParticles();
+  }
+});
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
