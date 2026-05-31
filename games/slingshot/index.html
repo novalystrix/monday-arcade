@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Slingshot — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #06060f;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6060cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+.back-link:hover { color: #8888ff; }
+canvas { display: block; border-radius: 8px; }
+#ui {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  text-align: right;
+  font-size: 14px;
+  z-index: 100;
+  color: #aac;
+}
+#ui .level { font-size: 18px; color: #88ccff; }
+#ui .shots { color: #aaa; font-size: 12px; margin-top: 4px; }
+#message {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 28px;
+  color: #fff;
+  text-align: center;
+  pointer-events: none;
+  z-index: 200;
+  text-shadow: 0 0 20px rgba(100,150,255,0.8);
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+#message.show { opacity: 1; }
+#message .sub {
+  font-size: 14px;
+  color: #88aacc;
+  margin-top: 8px;
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<div id="ui">
+  <div class="level">Level <span id="lvl">1</span> / <span id="maxlvl">12</span></div>
+  <div class="shots">Shots: <span id="shots">0</span></div>
+</div>
+<div id="message"></div>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const msgEl = document.getElementById('message');
+const lvlEl = document.getElementById('lvl');
+const maxlvlEl = document.getElementById('maxlvl');
+const shotsEl = document.getElementById('shots');
+
+let W, H;
+function resize() {
+  W = canvas.width = Math.min(window.innerWidth, 800);
+  H = canvas.height = Math.min(window.innerHeight - 20, 700);
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Physics constants
+const G = 800;
+const TRAIL_LEN = 120;
+const PROJ_R = 5;
+const TARGET_R = 14;
+const PLANET_GLOW = 40;
+
+// Colors
+const COLORS = {
+  planet: ['#4466ff', '#ff6644', '#44ddaa', '#dd44ff', '#ffaa22', '#22ddff'],
+  target: '#ffdd44',
+  targetHit: '#44ff88',
+  proj: '#ffffff',
+  trail: 'rgba(120,160,255,',
+  aim: 'rgba(255,255,255,0.25)',
+  stars: '#223'
+};
+
+// Stars background
+let stars = [];
+function genStars() {
+  stars = [];
+  for (let i = 0; i < 200; i++) {
+    stars.push({
+      x: Math.random() * 800,
+      y: Math.random() * 700,
+      r: Math.random() * 1.2 + 0.3,
+      a: Math.random() * 0.5 + 0.2,
+      twinkleSpeed: Math.random() * 2 + 1
+    });
+  }
+}
+genStars();
+
+// Level definitions
+const levels = [
+  // Level 1: Simple - one planet, one target
+  {
+    spawn: { x: 100, y: 350 },
+    planets: [{ x: 400, y: 350, r: 30, m: 2000 }],
+    targets: [{ x: 650, y: 350 }]
+  },
+  // Level 2: Curved shot
+  {
+    spawn: { x: 100, y: 500 },
+    planets: [{ x: 350, y: 350, r: 35, m: 2500 }],
+    targets: [{ x: 600, y: 200 }]
+  },
+  // Level 3: Two planets
+  {
+    spawn: { x: 100, y: 350 },
+    planets: [
+      { x: 300, y: 250, r: 25, m: 1800 },
+      { x: 500, y: 450, r: 28, m: 2000 }
+    ],
+    targets: [{ x: 700, y: 350 }]
+  },
+  // Level 4: Two targets
+  {
+    spawn: { x: 100, y: 600 },
+    planets: [{ x: 400, y: 400, r: 40, m: 3500 }],
+    targets: [{ x: 650, y: 200 }, { x: 650, y: 600 }]
+  },
+  // Level 5: Tight corridor
+  {
+    spawn: { x: 80, y: 350 },
+    planets: [
+      { x: 300, y: 200, r: 22, m: 1500 },
+      { x: 300, y: 500, r: 22, m: 1500 }
+    ],
+    targets: [{ x: 600, y: 350 }]
+  },
+  // Level 6: Gravity well
+  {
+    spawn: { x: 100, y: 100 },
+    planets: [{ x: 400, y: 350, r: 50, m: 5000 }],
+    targets: [{ x: 100, y: 600 }]
+  },
+  // Level 7: Three planets triangle
+  {
+    spawn: { x: 60, y: 350 },
+    planets: [
+      { x: 250, y: 200, r: 22, m: 1600 },
+      { x: 450, y: 500, r: 26, m: 2000 },
+      { x: 600, y: 250, r: 20, m: 1400 }
+    ],
+    targets: [{ x: 720, y: 500 }]
+  },
+  // Level 8: Multi-target orbit
+  {
+    spawn: { x: 400, y: 650 },
+    planets: [{ x: 400, y: 350, r: 35, m: 3000 }],
+    targets: [
+      { x: 400, y: 80 },
+      { x: 700, y: 350 },
+      { x: 100, y: 350 }
+    ]
+  },
+  // Level 9: Slalom
+  {
+    spawn: { x: 60, y: 600 },
+    planets: [
+      { x: 200, y: 300, r: 24, m: 1800 },
+      { x: 400, y: 500, r: 24, m: 1800 },
+      { x: 600, y: 250, r: 24, m: 1800 }
+    ],
+    targets: [{ x: 740, y: 500 }]
+  },
+  // Level 10: Double gravity flip
+  {
+    spawn: { x: 400, y: 50 },
+    planets: [
+      { x: 200, y: 300, r: 30, m: 2500 },
+      { x: 600, y: 300, r: 30, m: 2500 }
+    ],
+    targets: [{ x: 400, y: 620 }, { x: 150, y: 580 }]
+  },
+  // Level 11: Dense field
+  {
+    spawn: { x: 60, y: 350 },
+    planets: [
+      { x: 200, y: 180, r: 18, m: 1200 },
+      { x: 350, y: 450, r: 20, m: 1400 },
+      { x: 500, y: 200, r: 18, m: 1200 },
+      { x: 650, y: 400, r: 20, m: 1400 }
+    ],
+    targets: [{ x: 740, y: 150 }]
+  },
+  // Level 12: Grand finale - massive planet, tiny gap
+  {
+    spawn: { x: 400, y: 680 },
+    planets: [
+      { x: 400, y: 350, r: 55, m: 6000 },
+      { x: 150, y: 150, r: 18, m: 1000 },
+      { x: 650, y: 150, r: 18, m: 1000 }
+    ],
+    targets: [
+      { x: 400, y: 60 },
+      { x: 150, y: 600 },
+      { x: 650, y: 600 }
+    ]
+  }
+];
+
+let currentLevel = 0;
+let shots = 0;
+let projectile = null;
+let trail = [];
+let hitTargets = [];
+let particles = [];
+let dragging = false;
+let dragStart = { x: 0, y: 0 };
+let dragEnd = { x: 0, y: 0 };
+let aimPoints = [];
+let levelComplete = false;
+let gameComplete = false;
+let time = 0;
+
+function getLevel() { return levels[currentLevel]; }
+
+function showMsg(text, sub) {
+  msgEl.innerHTML = text + (sub ? `<div class="sub">${sub}</div>` : '');
+  msgEl.classList.add('show');
+  setTimeout(() => msgEl.classList.remove('show'), 2500);
+}
+
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 150 + 50;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: Math.random() * 1.5 + 0.8,
+      r: Math.random() * 3 + 1,
+      color
+    });
+  }
+}
+
+function predictTrajectory(sx, sy, vx, vy, steps) {
+  const pts = [];
+  const level = getLevel();
+  let px = sx, py = sy;
+  let pvx = vx, pvy = vy;
+  const dt = 1 / 60;
+  for (let i = 0; i < steps; i++) {
+    for (const p of level.planets) {
+      const dx = p.x - px;
+      const dy = p.y - py;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < p.r) return pts;
+      const force = G * p.m / (dist * dist);
+      pvx += (dx / dist) * force * dt;
+      pvy += (dy / dist) * force * dt;
+    }
+    px += pvx * dt;
+    py += pvy * dt;
+    if (i % 3 === 0) pts.push({ x: px, y: py });
+    if (px < -50 || px > W + 50 || py < -50 || py > H + 50) break;
+  }
+  return pts;
+}
+
+function launch(vx, vy) {
+  const level = getLevel();
+  projectile = {
+    x: level.spawn.x,
+    y: level.spawn.y,
+    vx, vy,
+    alive: true
+  };
+  trail = [{ x: projectile.x, y: projectile.y }];
+  shots++;
+  shotsEl.textContent = shots;
+}
+
+function resetLevel() {
+  projectile = null;
+  trail = [];
+  hitTargets = [];
+  levelComplete = false;
+  lvlEl.textContent = currentLevel + 1;
+}
+
+function nextLevel() {
+  currentLevel++;
+  if (currentLevel >= levels.length) {
+    gameComplete = true;
+    showMsg('🏆 ALL LEVELS COMPLETE!', `Total shots: ${shots}`);
+    return;
+  }
+  resetLevel();
+  showMsg(`Level ${currentLevel + 1}`, levels[currentLevel].targets.length > 1 ? `${levels[currentLevel].targets.length} targets` : '');
+}
+
+// Input
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches ? e.touches[0] : e;
+  return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+}
+
+canvas.addEventListener('mousedown', e => startDrag(getPos(e)));
+canvas.addEventListener('mousemove', e => moveDrag(getPos(e)));
+canvas.addEventListener('mouseup', e => endDrag(getPos(e)));
+canvas.addEventListener('touchstart', e => { e.preventDefault(); startDrag(getPos(e)); }, { passive: false });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); moveDrag(getPos(e)); }, { passive: false });
+canvas.addEventListener('touchend', e => { e.preventDefault(); endDrag(dragEnd); }, { passive: false });
+
+function startDrag(pos) {
+  if (levelComplete || gameComplete) {
+    if (levelComplete) nextLevel();
+    if (gameComplete) {
+      currentLevel = 0;
+      shots = 0;
+      shotsEl.textContent = 0;
+      gameComplete = false;
+      resetLevel();
+      showMsg('Level 1', 'Aim and drag to launch');
+    }
+    return;
+  }
+  if (projectile && projectile.alive) return;
+  const level = getLevel();
+  const dx = pos.x - level.spawn.x;
+  const dy = pos.y - level.spawn.y;
+  if (Math.sqrt(dx * dx + dy * dy) < 60) {
+    dragging = true;
+    dragStart = { ...pos };
+    dragEnd = { ...pos };
+  }
+}
+
+function moveDrag(pos) {
+  if (!dragging) return;
+  dragEnd = { ...pos };
+  const level = getLevel();
+  const vx = (level.spawn.x - dragEnd.x) * 3;
+  const vy = (level.spawn.y - dragEnd.y) * 3;
+  aimPoints = predictTrajectory(level.spawn.x, level.spawn.y, vx, vy, 180);
+}
+
+function endDrag(pos) {
+  if (!dragging) return;
+  dragging = false;
+  const level = getLevel();
+  const vx = (level.spawn.x - dragEnd.x) * 3;
+  const vy = (level.spawn.y - dragEnd.y) * 3;
+  if (Math.abs(vx) + Math.abs(vy) > 20) {
+    launch(vx, vy);
+  }
+  aimPoints = [];
+}
+
+// Update
+function update(dt) {
+  time += dt;
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= p.decay * dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  if (!projectile || !projectile.alive) return;
+
+  const level = getLevel();
+
+  // Gravity
+  for (const p of level.planets) {
+    const dx = p.x - projectile.x;
+    const dy = p.y - projectile.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < p.r + PROJ_R) {
+      // Hit planet
+      projectile.alive = false;
+      spawnParticles(projectile.x, projectile.y, '#ff4444', 30);
+      return;
+    }
+    const force = G * p.m / (dist * dist);
+    projectile.vx += (dx / dist) * force * dt;
+    projectile.vy += (dy / dist) * force * dt;
+  }
+
+  projectile.x += projectile.vx * dt;
+  projectile.y += projectile.vy * dt;
+
+  // Trail
+  trail.push({ x: projectile.x, y: projectile.y });
+  if (trail.length > TRAIL_LEN) trail.shift();
+
+  // Check targets
+  for (let i = 0; i < level.targets.length; i++) {
+    if (hitTargets.includes(i)) continue;
+    const t = level.targets[i];
+    const dx = projectile.x - t.x;
+    const dy = projectile.y - t.y;
+    if (Math.sqrt(dx * dx + dy * dy) < TARGET_R + PROJ_R) {
+      hitTargets.push(i);
+      spawnParticles(t.x, t.y, '#ffdd44', 40);
+      if (hitTargets.length === level.targets.length) {
+        levelComplete = true;
+        projectile.alive = false;
+        spawnParticles(t.x, t.y, '#44ff88', 60);
+        const msg = currentLevel === levels.length - 1 ? '✨ PERFECT!' : '✓ Clear!';
+        showMsg(msg, 'Click to continue');
+      }
+    }
+  }
+
+  // Out of bounds
+  if (projectile.x < -100 || projectile.x > W + 100 || projectile.y < -100 || projectile.y > H + 100) {
+    projectile.alive = false;
+  }
+}
+
+// Draw
+function drawStar(s) {
+  const twinkle = 0.5 + 0.5 * Math.sin(time * s.twinkleSpeed);
+  ctx.globalAlpha = s.a * twinkle;
+  ctx.fillStyle = '#dde';
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+function drawPlanet(p, colorIdx) {
+  const color = COLORS.planet[colorIdx % COLORS.planet.length];
+
+  // Glow
+  const grad = ctx.createRadialGradient(p.x, p.y, p.r * 0.5, p.x, p.y, p.r + PLANET_GLOW);
+  grad.addColorStop(0, color + '40');
+  grad.addColorStop(0.5, color + '15');
+  grad.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.r + PLANET_GLOW, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Gravity field rings
+  ctx.strokeStyle = color + '18';
+  ctx.lineWidth = 1;
+  for (let ring = 1; ring <= 3; ring++) {
+    const ringR = p.r + ring * 25 + Math.sin(time * 1.5 + ring) * 5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Body
+  const bodyGrad = ctx.createRadialGradient(p.x - p.r * 0.3, p.y - p.r * 0.3, p.r * 0.1, p.x, p.y, p.r);
+  bodyGrad.addColorStop(0, '#ffffff40');
+  bodyGrad.addColorStop(0.4, color);
+  bodyGrad.addColorStop(1, color + '80');
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawTarget(t, idx) {
+  const hit = hitTargets.includes(idx);
+  const color = hit ? COLORS.targetHit : COLORS.target;
+  const pulse = hit ? 0 : Math.sin(time * 4) * 4;
+
+  // Glow
+  const grad = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, TARGET_R + 20 + pulse);
+  grad.addColorStop(0, color + '60');
+  grad.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(t.x, t.y, TARGET_R + 20 + pulse, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ring
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(t.x, t.y, TARGET_R + pulse, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Diamond shape inside
+  if (!hit) {
+    ctx.fillStyle = color;
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(time * 2);
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(8, 0);
+    ctx.lineTo(0, 8);
+    ctx.lineTo(-8, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.fillStyle = color;
+    ctx.font = '16px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✓', t.x, t.y);
+  }
+}
+
+function drawSpawn() {
+  const level = getLevel();
+  const s = level.spawn;
+  const pulse = Math.sin(time * 3) * 3;
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, 12 + pulse, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawTrail() {
+  if (trail.length < 2) return;
+  for (let i = 1; i < trail.length; i++) {
+    const alpha = (i / trail.length) * 0.7;
+    const width = (i / trail.length) * 3;
+    ctx.strokeStyle = COLORS.trail + alpha + ')';
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+    ctx.lineTo(trail[i].x, trail[i].y);
+    ctx.stroke();
+  }
+}
+
+function drawProjectile() {
+  if (!projectile || !projectile.alive) return;
+  // Glow
+  const grad = ctx.createRadialGradient(projectile.x, projectile.y, 0, projectile.x, projectile.y, PROJ_R + 10);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+  grad.addColorStop(0.5, 'rgba(150,180,255,0.3)');
+  grad.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(projectile.x, projectile.y, PROJ_R + 10, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(projectile.x, projectile.y, PROJ_R, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawAim() {
+  if (!dragging || aimPoints.length < 2) return;
+  // Draw pull line
+  const level = getLevel();
+  ctx.strokeStyle = COLORS.aim;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 6]);
+  ctx.beginPath();
+  ctx.moveTo(level.spawn.x, level.spawn.y);
+  ctx.lineTo(dragEnd.x, dragEnd.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Predicted path
+  for (let i = 1; i < aimPoints.length; i++) {
+    const alpha = (1 - i / aimPoints.length) * 0.4;
+    ctx.fillStyle = `rgba(200,220,255,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(aimPoints[i].x, aimPoints[i].y, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Background gradient
+  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * 0.7);
+  bg.addColorStop(0, '#0a0a1a');
+  bg.addColorStop(1, '#04040c');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  for (const s of stars) drawStar(s);
+
+  const level = getLevel();
+
+  // Planets
+  level.planets.forEach((p, i) => drawPlanet(p, i));
+
+  // Targets
+  level.targets.forEach((t, i) => drawTarget(t, i));
+
+  // Spawn point
+  if (!projectile || !projectile.alive) drawSpawn();
+
+  // Trail
+  drawTrail();
+
+  // Projectile
+  drawProjectile();
+
+  // Aim
+  drawAim();
+
+  // Particles
+  drawParticles();
+}
+
+// Main loop
+let lastTime = performance.now();
+function loop(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Init
+maxlvlEl.textContent = levels.length;
+showMsg('Slingshot', 'Drag from the dot to launch');
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
