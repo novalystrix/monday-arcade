@@ -1,0 +1,8 @@
+{
+  "name": "Pendulum",
+  "description": "Swing from pendulum to pendulum — time your release, ride the momentum, climb the sky. Hypnotic physics meets neon beauty.",
+  "controls": "Click/tap to attach to nearest anchor. Release to fly. Reach the goal to advance.",
+  "createdAt": "2026-07-21T12:00:00Z",
+  "tags": ["physics", "timing", "swing", "neon"],
+  "thumbnail": "/games/pendulum/thumb.png"
+}
