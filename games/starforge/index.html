@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Starforge — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #020108;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  transition: color 0.2s;
+}
+.back-link:hover { color: #d4a0ff; }
+
+.hud {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 500px;
+  padding: 40px 12px 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  z-index: 10;
+}
+.hud-score { color: #a78bfa; }
+.hud-level { color: #60a5fa; }
+.hud-wells { color: #f9a8d4; }
+.hud-combo { color: #fbbf24; opacity: 0; transition: opacity 0.3s; }
+.hud-combo.show { opacity: 1; }
+
+canvas {
+  display: block;
+  border-radius: 6px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2,1,8,0.92);
+  z-index: 50;
+  transition: opacity 0.4s;
+}
+.overlay.hidden { opacity: 0; pointer-events: none; }
+
+.title {
+  font-size: 2.6rem;
+  font-weight: bold;
+  background: linear-gradient(135deg, #a78bfa, #60a5fa, #f9a8d4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 12px;
+  letter-spacing: 0.08em;
+}
+.subtitle {
+  font-size: 0.82rem;
+  color: #7c6fad;
+  margin-bottom: 28px;
+  text-align: center;
+  max-width: 320px;
+  line-height: 1.5;
+}
+.btn {
+  background: linear-gradient(135deg, #6d28d9, #4f46e5);
+  color: #fff;
+  border: none;
+  padding: 12px 36px;
+  font-size: 1rem;
+  border-radius: 30px;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.08em;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 0 20px rgba(109,40,217,0.4);
+}
+.btn:hover { transform: scale(1.05); box-shadow: 0 0 30px rgba(109,40,217,0.7); }
+.btn:active { transform: scale(0.97); }
+
+.instructions {
+  font-size: 0.7rem;
+  color: #5b5590;
+  margin-top: 16px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.level-announce {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.5);
+  font-size: 2.4rem;
+  font-weight: bold;
+  background: linear-gradient(135deg, #a78bfa, #60a5fa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0;
+  z-index: 40;
+  pointer-events: none;
+  transition: opacity 0.5s, transform 0.5s;
+  letter-spacing: 0.1em;
+}
+.level-announce.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.score-popup {
+  position: absolute;
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #fbbf24;
+  pointer-events: none;
+  z-index: 30;
+  text-shadow: 0 0 12px rgba(251,191,36,0.6);
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+
+<div class="hud">
+  <span class="hud-score">STARDUST: <span id="score">0</span></span>
+  <span class="hud-level">LEVEL <span id="level">1</span></span>
+  <span class="hud-wells">WELLS: <span id="wells">5</span></span>
+  <span class="hud-combo" id="combo">COMBO x1</span>
+</div>
+
+<canvas id="c"></canvas>
+
+<div class="overlay" id="startScreen">
+  <div class="title">STARFORGE</div>
+  <div class="subtitle">Place gravity wells to guide streams of stardust into the collection nebulae. Chain combos for bonus points.</div>
+  <button class="btn" id="startBtn">BEGIN</button>
+  <div class="instructions">
+    Click/tap to place gravity wells<br>
+    Right-click or long-press to remove<br>
+    Guide ALL stardust into the glowing nebulae
+  </div>
+</div>
+
+<div class="overlay hidden" id="winScreen">
+  <div class="title" id="winTitle">LEVEL COMPLETE</div>
+  <div class="subtitle" id="winSub"></div>
+  <button class="btn" id="nextBtn">NEXT LEVEL</button>
+</div>
+
+<div class="overlay hidden" id="gameOverScreen">
+  <div class="title" style="background: linear-gradient(135deg, #ef4444, #f97316); -webkit-background-clip: text; background-clip: text;">STARDUST LOST</div>
+  <div class="subtitle" id="goSub"></div>
+  <button class="btn" id="retryBtn">TRY AGAIN</button>
+</div>
+
+<div class="level-announce" id="levelAnnounce"></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// Sizing
+function resize() {
+  const maxW = Math.min(window.innerWidth - 16, 500);
+  const maxH = window.innerHeight - 80;
+  const s = Math.min(maxW, maxH);
+  canvas.width = s;
+  canvas.height = s;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Audio context (lazy)
+let audioCtx = null;
+function getAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function playTone(freq, dur, vol = 0.08, type = 'sine') {
+  try {
+    const ac = getAudio();
+    const osc = ac.createOscillator();
+    const g = ac.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(vol, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+    osc.connect(g);
+    g.connect(ac.destination);
+    osc.start();
+    osc.stop(ac.currentTime + dur);
+  } catch(e) {}
+}
+
+function playCollect() {
+  playTone(523, 0.2, 0.06);
+  setTimeout(() => playTone(659, 0.2, 0.06), 80);
+  setTimeout(() => playTone(784, 0.3, 0.06), 160);
+}
+
+function playPlace() {
+  playTone(330, 0.15, 0.04, 'triangle');
+}
+
+function playCombo(n) {
+  const base = 400 + n * 60;
+  playTone(base, 0.3, 0.07);
+  setTimeout(() => playTone(base * 1.25, 0.3, 0.07), 100);
+}
+
+function playLevelComplete() {
+  [523, 659, 784, 1047].forEach((f, i) => {
+    setTimeout(() => playTone(f, 0.4, 0.08), i * 120);
+  });
+}
+
+function playLose() {
+  playTone(300, 0.4, 0.08, 'sawtooth');
+  setTimeout(() => playTone(200, 0.6, 0.08, 'sawtooth'), 200);
+}
+
+// Game state
+let state = 'menu'; // menu, playing, win, gameover
+let particles = [];
+let wells = [];
+let nebulae = [];
+let emitters = [];
+let stars = [];
+let scorePopups = [];
+let score = 0;
+let level = 1;
+let maxWells = 5;
+let wellsLeft = 5;
+let combo = 0;
+let comboTimer = 0;
+let collected = 0;
+let totalToCollect = 0;
+let lost = 0;
+let maxLoss = 0;
+let bestScore = parseInt(localStorage.getItem('starforge_best') || '0');
+let time = 0;
+
+// Background stars
+for (let i = 0; i < 120; i++) {
+  stars.push({
+    x: Math.random(), y: Math.random(),
+    s: Math.random() * 1.5 + 0.3,
+    b: Math.random() * 0.5 + 0.3,
+    sp: Math.random() * 0.3 + 0.1
+  });
+}
+
+// Level definitions
+function getLevelDef(lvl) {
+  const W = canvas.width;
+  const H = canvas.height;
+  const cx = W / 2, cy = H / 2;
+  const levels = [
+    // Level 1: Simple - one emitter, one nebula
+    {
+      emitters: [{ x: W * 0.15, y: cy, angle: 0, rate: 8, speed: 1.8, color: '#a78bfa' }],
+      nebulae: [{ x: W * 0.85, y: cy, r: 35, color: '#a78bfa' }],
+      wells: 5, maxLoss: 15, goal: 30
+    },
+    // Level 2: Two streams crossing
+    {
+      emitters: [
+        { x: W * 0.1, y: H * 0.3, angle: 0, rate: 7, speed: 2, color: '#60a5fa' },
+        { x: W * 0.1, y: H * 0.7, angle: 0, rate: 7, speed: 2, color: '#f9a8d4' }
+      ],
+      nebulae: [
+        { x: W * 0.85, y: H * 0.7, r: 32, color: '#60a5fa' },
+        { x: W * 0.85, y: H * 0.3, r: 32, color: '#f9a8d4' }
+      ],
+      wells: 6, maxLoss: 12, goal: 40
+    },
+    // Level 3: Three-way with obstacles
+    {
+      emitters: [
+        { x: cx, y: H * 0.05, angle: Math.PI / 2, rate: 6, speed: 2, color: '#a78bfa' },
+        { x: W * 0.05, y: H * 0.7, angle: 0.3, rate: 6, speed: 2, color: '#34d399' },
+        { x: W * 0.95, y: H * 0.7, angle: Math.PI - 0.3, rate: 6, speed: 2, color: '#fb923c' }
+      ],
+      nebulae: [
+        { x: cx, y: H * 0.85, r: 30, color: '#a78bfa' },
+        { x: W * 0.8, y: H * 0.2, r: 30, color: '#34d399' },
+        { x: W * 0.2, y: H * 0.2, r: 30, color: '#fb923c' }
+      ],
+      wells: 7, maxLoss: 10, goal: 45
+    },
+    // Level 4: Spiral challenge
+    {
+      emitters: [
+        { x: cx, y: H * 0.05, angle: Math.PI / 2, rate: 5, speed: 2.5, color: '#c084fc' },
+        { x: W * 0.05, y: cy, angle: 0, rate: 5, speed: 2.5, color: '#60a5fa' },
+        { x: cx, y: H * 0.95, angle: -Math.PI / 2, rate: 5, speed: 2.5, color: '#f472b6' },
+        { x: W * 0.95, y: cy, angle: Math.PI, rate: 5, speed: 2.5, color: '#fbbf24' }
+      ],
+      nebulae: [
+        { x: W * 0.25, y: H * 0.25, r: 28, color: '#c084fc' },
+        { x: W * 0.75, y: H * 0.25, r: 28, color: '#60a5fa' },
+        { x: W * 0.75, y: H * 0.75, r: 28, color: '#f472b6' },
+        { x: W * 0.25, y: H * 0.75, r: 28, color: '#fbbf24' }
+      ],
+      wells: 8, maxLoss: 8, goal: 50
+    },
+    // Level 5: The grand finale
+    {
+      emitters: [
+        { x: cx, y: H * 0.03, angle: Math.PI / 2, rate: 4, speed: 2.8, color: '#e879f9' },
+        { x: W * 0.03, y: H * 0.3, angle: 0.4, rate: 4, speed: 2.8, color: '#38bdf8' },
+        { x: W * 0.97, y: H * 0.3, angle: Math.PI - 0.4, rate: 4, speed: 2.8, color: '#4ade80' },
+        { x: W * 0.03, y: H * 0.7, angle: -0.3, rate: 4, speed: 2.8, color: '#fb923c' },
+        { x: W * 0.97, y: H * 0.7, angle: Math.PI + 0.3, rate: 4, speed: 2.8, color: '#f43f5e' }
+      ],
+      nebulae: [{ x: cx, y: cy, r: 45, color: '#fff' }],
+      wells: 10, maxLoss: 5, goal: 80
+    }
+  ];
+  // Beyond level 5, generate harder procedural levels
+  if (lvl <= levels.length) return levels[lvl - 1];
+  const n = Math.min(3 + Math.floor(lvl / 2), 8);
+  const em = [], neb = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const ex = cx + Math.cos(a) * (W * 0.46);
+    const ey = cy + Math.sin(a) * (H * 0.46);
+    const hue = (i / n) * 360;
+    const col = `hsl(${hue}, 80%, 70%)`;
+    em.push({ x: ex, y: ey, angle: a + Math.PI, rate: 4, speed: 2.5 + lvl * 0.1, color: col });
+    const na = ((i + Math.floor(n / 2)) / n) * Math.PI * 2 - Math.PI / 2;
+    const nx = cx + Math.cos(na) * (W * 0.3);
+    const ny = cy + Math.sin(na) * (H * 0.3);
+    neb.push({ x: nx, y: ny, r: 26, color: col });
+  }
+  return { emitters: em, nebulae: neb, wells: Math.min(6 + lvl, 15), maxLoss: Math.max(3, 12 - lvl), goal: 40 + lvl * 10 };
+}
+
+function initLevel(lvl) {
+  const def = getLevelDef(lvl);
+  particles = [];
+  wells = [];
+  emitters = def.emitters.map(e => ({ ...e, timer: 0 }));
+  nebulae = def.nebulae.map(n => ({ ...n, pulse: 0, collected: 0 }));
+  maxWells = def.wells;
+  wellsLeft = def.wells;
+  totalToCollect = def.goal;
+  maxLoss = def.maxLoss;
+  collected = 0;
+  lost = 0;
+  combo = 0;
+  comboTimer = 0;
+  scorePopups = [];
+  updateHUD();
+}
+
+function updateHUD() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('level').textContent = level;
+  document.getElementById('wells').textContent = wellsLeft;
+  const ce = document.getElementById('combo');
+  if (combo > 1) {
+    ce.textContent = `COMBO x${combo}`;
+    ce.classList.add('show');
+  } else {
+    ce.classList.remove('show');
+  }
+}
+
+// Particle class
+function createParticle(emitter) {
+  const spread = 0.15;
+  const a = emitter.angle + (Math.random() - 0.5) * spread;
+  return {
+    x: emitter.x,
+    y: emitter.y,
+    vx: Math.cos(a) * emitter.speed,
+    vy: Math.sin(a) * emitter.speed,
+    color: emitter.color,
+    life: 1,
+    age: 0,
+    trail: [],
+    size: Math.random() * 2 + 1.5
+  };
+}
+
+// Well interaction
+function addWell(x, y) {
+  if (wellsLeft <= 0) return;
+  // Don't place too close to emitters or nebulae
+  for (const e of emitters) {
+    if (Math.hypot(x - e.x, y - e.y) < 25) return;
+  }
+  for (const n of nebulae) {
+    if (Math.hypot(x - n.x, y - n.y) < n.r + 10) return;
+  }
+  wells.push({ x, y, strength: 120, r: 18, pulse: 0, born: time });
+  wellsLeft--;
+  updateHUD();
+  playPlace();
+}
+
+function removeWell(x, y) {
+  for (let i = wells.length - 1; i >= 0; i--) {
+    if (Math.hypot(x - wells[i].x, y - wells[i].y) < 28) {
+      wells.splice(i, 1);
+      wellsLeft++;
+      updateHUD();
+      return;
+    }
+  }
+}
+
+// Input
+let longPressTimer = null;
+let longPressed = false;
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('pointerdown', e => {
+  if (state !== 'playing') return;
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  longPressed = false;
+  if (e.button === 2) {
+    removeWell(x, y);
+    return;
+  }
+  longPressTimer = setTimeout(() => {
+    longPressed = true;
+    removeWell(x, y);
+  }, 400);
+});
+
+canvas.addEventListener('pointerup', e => {
+  if (state !== 'playing') return;
+  clearTimeout(longPressTimer);
+  if (longPressed || e.button === 2) return;
+  const rect = canvas.getBoundingClientRect();
+  addWell(e.clientX - rect.left, e.clientY - rect.top);
+});
+
+canvas.addEventListener('pointerleave', () => clearTimeout(longPressTimer));
+
+// Screens
+document.getElementById('startBtn').addEventListener('click', () => {
+  document.getElementById('startScreen').classList.add('hidden');
+  state = 'playing';
+  score = 0;
+  level = 1;
+  initLevel(level);
+  showLevelAnnounce();
+});
+
+document.getElementById('nextBtn').addEventListener('click', () => {
+  document.getElementById('winScreen').classList.add('hidden');
+  level++;
+  initLevel(level);
+  state = 'playing';
+  showLevelAnnounce();
+});
+
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('gameOverScreen').classList.add('hidden');
+  initLevel(level);
+  state = 'playing';
+});
+
+function showLevelAnnounce() {
+  const el = document.getElementById('levelAnnounce');
+  el.textContent = `LEVEL ${level}`;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1500);
+}
+
+function showScorePopup(x, y, text) {
+  scorePopups.push({ x, y, text, life: 1 });
+}
+
+// Drawing
+function drawStars() {
+  for (const s of stars) {
+    const b = s.b + Math.sin(time * s.sp) * 0.2;
+    ctx.fillStyle = `rgba(200,200,255,${b})`;
+    ctx.fillRect(s.x * canvas.width, s.y * canvas.height, s.s, s.s);
+  }
+}
+
+function drawNebulaBg() {
+  // Subtle radial glow around each nebula
+  for (const n of nebulae) {
+    const grad = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r * 3);
+    const c = hexToRgb(n.color);
+    grad.addColorStop(0, `rgba(${c.r},${c.g},${c.b},0.08)`);
+    grad.addColorStop(0.5, `rgba(${c.r},${c.g},${c.b},0.03)`);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.fillRect(n.x - n.r * 3, n.y - n.r * 3, n.r * 6, n.r * 6);
+  }
+}
+
+function drawEmitters() {
+  for (const e of emitters) {
+    const c = hexToRgb(e.color);
+    // Glow
+    const grad = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, 16);
+    grad.addColorStop(0, `rgba(${c.r},${c.g},${c.b},0.8)`);
+    grad.addColorStop(0.5, `rgba(${c.r},${c.g},${c.b},0.2)`);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, 16, 0, Math.PI * 2);
+    ctx.fill();
+    // Core
+    ctx.fillStyle = e.color;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    // Direction indicator
+    const dx = Math.cos(e.angle) * 12;
+    const dy = Math.sin(e.angle) * 12;
+    ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},0.5)`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(e.x, e.y);
+    ctx.lineTo(e.x + dx, e.y + dy);
+    ctx.stroke();
+  }
+}
+
+function drawNebulae() {
+  for (const n of nebulae) {
+    const c = hexToRgb(n.color);
+    const pulse = 1 + Math.sin(time * 2 + n.pulse) * 0.08;
+    const r = n.r * pulse;
+    
+    // Outer glow
+    const grad = ctx.createRadialGradient(n.x, n.y, r * 0.3, n.x, n.y, r * 1.5);
+    grad.addColorStop(0, `rgba(${c.r},${c.g},${c.b},0.25)`);
+    grad.addColorStop(0.6, `rgba(${c.r},${c.g},${c.b},0.08)`);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ring
+    ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},0.4)`;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.lineDashOffset = -time * 20;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Progress ring
+    if (totalToCollect > 0) {
+      const progress = collected / totalToCollect;
+      ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},0.8)`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 6, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawWells() {
+  for (const w of wells) {
+    const age = time - w.born;
+    const appear = Math.min(age * 3, 1);
+    const pulse = 1 + Math.sin(time * 3) * 0.1;
+    const r = w.r * appear * pulse;
+
+    // Gravitational field rings
+    for (let i = 3; i > 0; i--) {
+      const rr = r + i * 12 + Math.sin(time * 2 + i) * 3;
+      ctx.strokeStyle = `rgba(168,130,255,${0.06 * appear / i})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, rr, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Core glow
+    const grad = ctx.createRadialGradient(w.x, w.y, 0, w.x, w.y, r);
+    grad.addColorStop(0, `rgba(168,130,255,${0.9 * appear})`);
+    grad.addColorStop(0.5, `rgba(100,60,200,${0.3 * appear})`);
+    grad.addColorStop(1, `rgba(60,30,120,${0.05 * appear})`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bright center
+    ctx.fillStyle = `rgba(220,200,255,${0.8 * appear})`;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, 3 * appear, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const c = hexToRgb(p.color);
+    const alpha = p.life * 0.9;
+    
+    // Trail
+    if (p.trail.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(p.trail[0].x, p.trail[0].y);
+      for (let i = 1; i < p.trail.length; i++) {
+        ctx.lineTo(p.trail[i].x, p.trail[i].y);
+      }
+      ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},${alpha * 0.3})`;
+      ctx.lineWidth = p.size * 0.6;
+      ctx.stroke();
+    }
+
+    // Glow
+    const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 3);
+    grad.addColorStop(0, `rgba(${c.r},${c.g},${c.b},${alpha * 0.5})`);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Core
+    ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},${alpha})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawScorePopups() {
+  for (const p of scorePopups) {
+    ctx.fillStyle = `rgba(251,191,36,${p.life})`;
+    ctx.font = `bold ${14 + (1 - p.life) * 8}px 'Courier New', monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(p.text, p.x, p.y);
+  }
+}
+
+function drawLossBar() {
+  if (maxLoss <= 0) return;
+  const barW = 100;
+  const barH = 4;
+  const x = canvas.width - barW - 10;
+  const y = 8;
+  const pct = lost / maxLoss;
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fillRect(x, y, barW, barH);
+  const col = pct > 0.7 ? '#ef4444' : pct > 0.4 ? '#fbbf24' : '#4ade80';
+  ctx.fillStyle = col;
+  ctx.fillRect(x, y, barW * pct, barH);
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`LOST: ${lost}/${maxLoss}`, x + barW, y + 14);
+}
+
+// Update
+function update(dt) {
+  time += dt;
+  comboTimer -= dt;
+  if (comboTimer <= 0) combo = 0;
+
+  // Emit particles
+  for (const e of emitters) {
+    e.timer -= dt;
+    if (e.timer <= 0) {
+      e.timer = 1 / e.rate;
+      particles.push(createParticle(e));
+    }
+  }
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.age += dt;
+
+    // Gravity from wells
+    for (const w of wells) {
+      const dx = w.x - p.x;
+      const dy = w.y - p.y;
+      const dist = Math.max(Math.hypot(dx, dy), 10);
+      const force = w.strength / (dist * dist);
+      p.vx += (dx / dist) * force * dt;
+      p.vy += (dy / dist) * force * dt;
+    }
+
+    // Speed limit
+    const spd = Math.hypot(p.vx, p.vy);
+    if (spd > 6) {
+      p.vx = (p.vx / spd) * 6;
+      p.vy = (p.vy / spd) * 6;
+    }
+
+    p.x += p.vx;
+    p.y += p.vy;
+
+    // Trail
+    p.trail.push({ x: p.x, y: p.y });
+    if (p.trail.length > 8) p.trail.shift();
+
+    // Check nebula collection
+    let wasCollected = false;
+    for (const n of nebulae) {
+      if (Math.hypot(p.x - n.x, p.y - n.y) < n.r) {
+        wasCollected = true;
+        collected++;
+        combo++;
+        comboTimer = 2;
+        const points = Math.max(1, combo);
+        score += points;
+        n.pulse = time;
+        n.collected++;
+        showScorePopup(n.x, n.y - n.r - 10, `+${points}`);
+        if (combo > 1) playCombo(combo);
+        else playCollect();
+        break;
+      }
+    }
+
+    if (wasCollected) {
+      particles.splice(i, 1);
+      continue;
+    }
+
+    // Out of bounds
+    const margin = 30;
+    if (p.x < -margin || p.x > canvas.width + margin || p.y < -margin || p.y > canvas.height + margin) {
+      lost++;
+      particles.splice(i, 1);
+      continue;
+    }
+
+    // Max age
+    if (p.age > 15) {
+      lost++;
+      particles.splice(i, 1);
+    }
+  }
+
+  // Score popups
+  for (let i = scorePopups.length - 1; i >= 0; i--) {
+    scorePopups[i].life -= dt * 1.2;
+    scorePopups[i].y -= dt * 25;
+    if (scorePopups[i].life <= 0) scorePopups.splice(i, 1);
+  }
+
+  updateHUD();
+
+  // Win/lose
+  if (collected >= totalToCollect) {
+    state = 'win';
+    const bonus = Math.max(0, (maxLoss - lost) * 10);
+    score += bonus;
+    playLevelComplete();
+    if (score > bestScore) {
+      bestScore = score;
+      localStorage.setItem('starforge_best', bestScore);
+    }
+    document.getElementById('winSub').textContent = `Stardust collected! Bonus: +${bonus}  |  Total: ${score}  |  Best: ${bestScore}`;
+    document.getElementById('winScreen').classList.remove('hidden');
+  }
+
+  if (lost >= maxLoss) {
+    state = 'gameover';
+    playLose();
+    if (score > bestScore) {
+      bestScore = score;
+      localStorage.setItem('starforge_best', bestScore);
+    }
+    document.getElementById('goSub').textContent = `Too much stardust lost!  Score: ${score}  |  Best: ${bestScore}`;
+    document.getElementById('gameOverScreen').classList.remove('hidden');
+  }
+}
+
+// Render loop
+let last = 0;
+function frame(ts) {
+  const dt = Math.min((ts - last) / 1000, 0.05);
+  last = ts;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  drawStars();
+
+  if (state === 'playing') {
+    update(dt);
+    drawNebulaBg();
+    drawNebulae();
+    drawEmitters();
+    drawWells();
+    drawParticles();
+    drawScorePopups();
+    drawLossBar();
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// Helpers
+function hexToRgb(hex) {
+  if (hex.startsWith('hsl')) {
+    // Parse hsl and convert
+    const m = hex.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+    if (m) {
+      const [_, h, s, l] = m.map(Number);
+      return hslToRgb(h, s, l);
+    }
+    return { r: 180, g: 140, b: 255 };
+  }
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : { r: 180, g: 140, b: 255 };
+}
+
+function hslToRgb(h, s, l) {
+  s /= 100; l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+  const m = l - c / 2;
+  let r, g, b;
+  if (h < 60) { r = c; g = x; b = 0; }
+  else if (h < 120) { r = x; g = c; b = 0; }
+  else if (h < 180) { r = 0; g = c; b = x; }
+  else if (h < 240) { r = 0; g = x; b = c; }
+  else if (h < 300) { r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  return { r: Math.round((r + m) * 255), g: Math.round((g + m) * 255), b: Math.round((b + m) * 255) };
+}
+</script>
+</body>
+</html>
