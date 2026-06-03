@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Particle Storm — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #050510;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #4040aa;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  transition: color 0.2s;
+}
+.back-link:hover { color: #00d4ff; }
+
+.hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  padding: 40px 20px 10px;
+  font-size: 0.75rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  z-index: 50;
+  pointer-events: none;
+}
+.hud-score { color: #39ff14; }
+.hud-level { color: #00d4ff; }
+.hud-best { color: #ff6b9d; }
+
+canvas {
+  display: block;
+  touch-action: none;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5,5,16,0.85);
+  z-index: 200;
+  transition: opacity 0.4s;
+}
+.overlay.hidden { opacity: 0; pointer-events: none; }
+
+.overlay h1 {
+  font-size: 2.2rem;
+  letter-spacing: 0.2em;
+  background: linear-gradient(135deg, #00d4ff, #a855f7, #ff6b9d);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 12px;
+}
+.overlay .sub {
+  color: #aaa;
+  font-size: 0.85rem;
+  margin-bottom: 30px;
+  letter-spacing: 0.1em;
+}
+.overlay .final-score {
+  color: #ff6b9d;
+  font-size: 1.4rem;
+  margin-bottom: 8px;
+}
+.overlay button {
+  background: linear-gradient(135deg, #6366f1, #a855f7);
+  border: none;
+  color: #fff;
+  padding: 14px 48px;
+  font-family: inherit;
+  font-size: 1rem;
+  letter-spacing: 0.15em;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  text-transform: uppercase;
+}
+.overlay button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 30px rgba(168,85,247,0.5);
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<div class="hud">
+  <span class="hud-score">Score: <span id="score">0</span></span>
+  <span class="hud-level">Level: <span id="level">1</span></span>
+  <span class="hud-best">Best: <span id="best">0</span></span>
+</div>
+<canvas id="c"></canvas>
+
+<div class="overlay" id="startScreen">
+  <h1>PARTICLE STORM</h1>
+  <div class="sub">Absorb the light. Dodge the dark.</div>
+  <button id="startBtn">ENTER THE STORM</button>
+</div>
+
+<div class="overlay hidden" id="deathScreen">
+  <div class="final-score">Score: <span id="finalScore">0</span></div>
+  <div class="sub" id="newBestMsg" style="color:#ff6b9d;display:none">★ NEW BEST ★</div>
+  <button id="retryBtn">TRY AGAIN</button>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// State
+let player, particles, enemies, trails, shockwaves, bgStars;
+let score, level, bestScore, gameOver, gameStarted, absorbed;
+let mouseX, mouseY, touchActive;
+let lastTime, levelTimer;
+
+bestScore = parseInt(localStorage.getItem('ps_best') || '0');
+document.getElementById('best').textContent = bestScore;
+
+function init() {
+  player = { x: W / 2, y: H / 2, r: 14, glow: 0, pulse: 0, trail: [] };
+  particles = [];
+  enemies = [];
+  trails = [];
+  shockwaves = [];
+  bgStars = [];
+  score = 0;
+  level = 1;
+  absorbed = 0;
+  gameOver = false;
+  levelTimer = 0;
+  mouseX = W / 2;
+  mouseY = H / 2;
+
+  // Background stars
+  for (let i = 0; i < 120; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.5 + 0.3,
+      a: Math.random() * 0.5 + 0.1,
+      speed: Math.random() * 0.3 + 0.05,
+      phase: Math.random() * Math.PI * 2
+    });
+  }
+
+  spawnParticles(20);
+  spawnEnemies(3);
+  updateHUD();
+}
+
+function spawnParticles(n) {
+  for (let i = 0; i < n; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * Math.max(W, H) * 0.4 + 100;
+    particles.push({
+      x: W / 2 + Math.cos(angle) * dist,
+      y: H / 2 + Math.sin(angle) * dist,
+      r: Math.random() * 4 + 2,
+      vx: (Math.random() - 0.5) * 0.8,
+      vy: (Math.random() - 0.5) * 0.8,
+      hue: Math.random() * 60 + 160, // cyan to purple range
+      life: 1,
+      wobble: Math.random() * Math.PI * 2,
+      wobbleSpeed: Math.random() * 0.03 + 0.01
+    });
+  }
+}
+
+function spawnEnemies(n) {
+  for (let i = 0; i < n; i++) {
+    const side = Math.floor(Math.random() * 4);
+    let x, y;
+    if (side === 0) { x = -20; y = Math.random() * H; }
+    else if (side === 1) { x = W + 20; y = Math.random() * H; }
+    else if (side === 2) { x = Math.random() * W; y = -20; }
+    else { x = Math.random() * W; y = H + 20; }
+
+    const speed = 0.6 + level * 0.15 + Math.random() * 0.5;
+    const angle = Math.atan2(H / 2 - y, W / 2 - x) + (Math.random() - 0.5) * 1.5;
+    enemies.push({
+      x, y,
+      r: Math.random() * 5 + 4,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      pulse: Math.random() * Math.PI * 2,
+      life: 1
+    });
+  }
+}
+
+function updateHUD() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('level').textContent = level;
+  document.getElementById('best').textContent = bestScore;
+}
+
+// Input
+function setMouse(e) {
+  const rect = canvas.getBoundingClientRect();
+  mouseX = (e.clientX || e.touches?.[0]?.clientX || mouseX) - rect.left;
+  mouseY = (e.clientY || e.touches?.[0]?.clientY || mouseY) - rect.top;
+}
+canvas.addEventListener('mousemove', setMouse);
+canvas.addEventListener('touchmove', e => { e.preventDefault(); setMouse(e); }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); touchActive = true; setMouse(e); }, { passive: false });
+
+function dist(a, b) {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+function update(dt) {
+  if (gameOver) return;
+
+  const t = performance.now() * 0.001;
+
+  // Player follows mouse smoothly
+  const dx = mouseX - player.x;
+  const dy = mouseY - player.y;
+  const ease = Math.min(dt * 8, 1);
+  player.x += dx * ease;
+  player.y += dy * ease;
+  player.pulse += dt * 3;
+  player.glow = Math.sin(player.pulse) * 0.3 + 0.7;
+
+  // Player trail
+  player.trail.push({ x: player.x, y: player.y, a: 1, r: player.r });
+  if (player.trail.length > 25) player.trail.shift();
+  player.trail.forEach(t => t.a *= 0.92);
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.wobble += p.wobbleSpeed;
+    p.x += p.vx + Math.sin(p.wobble) * 0.3;
+    p.y += p.vy + Math.cos(p.wobble) * 0.3;
+
+    // Gentle attraction toward player
+    const d = dist(p, player);
+    if (d < 200) {
+      const pull = 0.5 / (d + 1);
+      p.vx += (player.x - p.x) * pull * dt;
+      p.vy += (player.y - p.y) * pull * dt;
+    }
+
+    // Absorb
+    if (d < player.r + p.r + 3) {
+      score += Math.ceil(p.r * level);
+      absorbed++;
+
+      // Burst effect
+      for (let j = 0; j < 8; j++) {
+        const ang = (Math.PI * 2 * j) / 8;
+        trails.push({
+          x: p.x, y: p.y,
+          vx: Math.cos(ang) * 3,
+          vy: Math.sin(ang) * 3,
+          life: 1,
+          hue: p.hue,
+          r: 2
+        });
+      }
+
+      particles.splice(i, 1);
+
+      // Grow player slightly
+      player.r = Math.min(player.r + 0.15, 30);
+
+      updateHUD();
+      continue;
+    }
+
+    // Wrap
+    if (p.x < -50) p.x = W + 50;
+    if (p.x > W + 50) p.x = -50;
+    if (p.y < -50) p.y = H + 50;
+    if (p.y > H + 50) p.y = -50;
+  }
+
+  // Update enemies
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    e.pulse += dt * 4;
+
+    // Slight homing
+    const ang = Math.atan2(player.y - e.y, player.x - e.x);
+    e.vx += Math.cos(ang) * 0.05 * dt * level;
+    e.vy += Math.sin(ang) * 0.05 * dt * level;
+
+    // Speed cap
+    const spd = Math.sqrt(e.vx ** 2 + e.vy ** 2);
+    const maxSpd = 1.5 + level * 0.2;
+    if (spd > maxSpd) {
+      e.vx = (e.vx / spd) * maxSpd;
+      e.vy = (e.vy / spd) * maxSpd;
+    }
+
+    e.x += e.vx;
+    e.y += e.vy;
+
+    // Collision with player
+    if (dist(e, player) < player.r + e.r - 2) {
+      die();
+      return;
+    }
+
+    // Remove if far off screen
+    if (e.x < -200 || e.x > W + 200 || e.y < -200 || e.y > H + 200) {
+      enemies.splice(i, 1);
+    }
+  }
+
+  // Update trail particles
+  for (let i = trails.length - 1; i >= 0; i--) {
+    const t = trails[i];
+    t.x += t.vx;
+    t.y += t.vy;
+    t.vx *= 0.96;
+    t.vy *= 0.96;
+    t.life -= dt * 2;
+    t.r *= 0.98;
+    if (t.life <= 0) trails.splice(i, 1);
+  }
+
+  // Update shockwaves
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.r += dt * 300;
+    s.a -= dt * 2;
+    if (s.a <= 0) shockwaves.splice(i, 1);
+  }
+
+  // Background stars twinkle
+  bgStars.forEach(s => {
+    s.phase += s.speed * dt;
+  });
+
+  // Replenish particles
+  if (particles.length < 15 + level * 3) {
+    spawnParticles(1);
+  }
+
+  // Level up
+  levelTimer += dt;
+  if (levelTimer > 12 || absorbed >= level * 15) {
+    level++;
+    levelTimer = 0;
+    absorbed = 0;
+    spawnEnemies(1 + Math.floor(level / 2));
+    spawnParticles(5);
+
+    // Level up shockwave
+    shockwaves.push({ x: player.x, y: player.y, r: 0, a: 0.6, hue: 200 });
+    updateHUD();
+  }
+}
+
+function die() {
+  gameOver = true;
+
+  // Death shockwave
+  shockwaves.push({ x: player.x, y: player.y, r: 0, a: 1, hue: 0 });
+
+  // Scatter debris
+  for (let i = 0; i < 40; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const spd = Math.random() * 6 + 2;
+    trails.push({
+      x: player.x, y: player.y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      life: 1,
+      hue: Math.random() * 360,
+      r: Math.random() * 3 + 1
+    });
+  }
+
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('ps_best', bestScore);
+    document.getElementById('newBestMsg').style.display = '';
+  } else {
+    document.getElementById('newBestMsg').style.display = 'none';
+  }
+
+  document.getElementById('finalScore').textContent = score;
+  updateHUD();
+
+  setTimeout(() => {
+    document.getElementById('deathScreen').classList.remove('hidden');
+  }, 600);
+}
+
+function draw() {
+  ctx.fillStyle = '#050510';
+  ctx.fillRect(0, 0, W, H);
+
+  const t = performance.now() * 0.001;
+
+  // Background stars
+  bgStars.forEach(s => {
+    const a = s.a + Math.sin(s.phase + t) * 0.15;
+    ctx.fillStyle = `rgba(180,200,255,${a})`;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Shockwaves
+  shockwaves.forEach(s => {
+    ctx.strokeStyle = `hsla(${s.hue},80%,60%,${s.a})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  // Trail particles
+  trails.forEach(tr => {
+    ctx.globalAlpha = tr.life;
+    ctx.fillStyle = `hsl(${tr.hue},80%,65%)`;
+    ctx.shadowColor = `hsl(${tr.hue},80%,65%)`;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(tr.x, tr.y, tr.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+
+  // Particles (collectible)
+  particles.forEach(p => {
+    const glow = Math.sin(t * 2 + p.wobble) * 0.3 + 0.7;
+    ctx.globalAlpha = glow;
+    ctx.fillStyle = `hsl(${p.hue},85%,70%)`;
+    ctx.shadowColor = `hsl(${p.hue},85%,70%)`;
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Tiny ring
+    ctx.strokeStyle = `hsla(${p.hue},85%,80%,${glow * 0.3})`;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r + 4 + Math.sin(t * 3 + p.wobble) * 2, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+
+  // Enemies
+  enemies.forEach(e => {
+    const pulse = Math.sin(e.pulse) * 0.3 + 0.7;
+    ctx.fillStyle = `rgba(255,40,60,${pulse})`;
+    ctx.shadowColor = '#ff2040';
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Danger ring
+    ctx.strokeStyle = `rgba(255,40,60,${pulse * 0.4})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r + 6 + Math.sin(e.pulse * 1.5) * 3, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner glow
+    const grad = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r);
+    grad.addColorStop(0, `rgba(255,180,180,${pulse * 0.6})`);
+    grad.addColorStop(1, 'rgba(255,40,60,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.shadowBlur = 0;
+
+  // Player trail
+  if (!gameOver) {
+    player.trail.forEach((pt, i) => {
+      ctx.globalAlpha = pt.a * 0.3;
+      const hue = 220 + i * 3;
+      ctx.fillStyle = `hsl(${hue},80%,65%)`;
+      ctx.shadowColor = `hsl(${hue},80%,65%)`;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.r * pt.a * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+
+    // Player orb
+    const pr = player.r;
+    const grad = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, pr + 10);
+    grad.addColorStop(0, `rgba(180,220,255,${player.glow})`);
+    grad.addColorStop(0.5, `rgba(100,140,255,${player.glow * 0.6})`);
+    grad.addColorStop(1, 'rgba(80,100,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, pr + 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Core
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = '#88aaff';
+    ctx.shadowBlur = 25;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, pr * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Outer ring
+    ctx.strokeStyle = `rgba(140,180,255,${0.3 + Math.sin(t * 2) * 0.15})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, pr + 5 + Math.sin(t * 3) * 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+}
+
+function loop(now) {
+  if (!lastTime) lastTime = now;
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Start / Retry
+document.getElementById('startBtn').addEventListener('click', () => {
+  document.getElementById('startScreen').classList.add('hidden');
+  gameStarted = true;
+  init();
+  lastTime = null;
+  requestAnimationFrame(loop);
+});
+
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('deathScreen').classList.add('hidden');
+  init();
+  lastTime = null;
+});
+</script>
+</body>
+</html>
