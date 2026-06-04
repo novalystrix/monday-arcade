@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Fractal Flight — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6060cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+}
+.back-link:hover { opacity: 1; }
+canvas { display: block; }
+
+#overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  pointer-events: none;
+}
+#overlay.active { pointer-events: all; }
+
+#title {
+  font-size: clamp(28px, 6vw, 56px);
+  font-weight: bold;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  background: linear-gradient(135deg, #ff00ff, #00ffff, #ffff00, #ff00ff);
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 3s ease-in-out infinite;
+  text-shadow: none;
+  margin-bottom: 12px;
+}
+@keyframes shimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+#subtitle {
+  font-size: clamp(12px, 2.5vw, 18px);
+  color: #aaa;
+  margin-bottom: 30px;
+  letter-spacing: 2px;
+}
+
+#start-btn {
+  padding: 14px 48px;
+  font-size: 18px;
+  font-family: 'Courier New', monospace;
+  background: transparent;
+  color: #00ffff;
+  border: 2px solid #00ffff;
+  cursor: pointer;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  transition: all 0.3s;
+}
+#start-btn:hover {
+  background: #00ffff;
+  color: #000;
+  box-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+}
+
+#hud {
+  position: fixed;
+  top: 14px;
+  right: 20px;
+  font-size: 16px;
+  z-index: 80;
+  text-align: right;
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+#hud.visible { opacity: 1; }
+#hud .score { color: #00ffff; font-size: 22px; font-weight: bold; }
+#hud .best { color: #666; font-size: 13px; margin-top: 2px; }
+
+#game-over {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+#game-over .go-title {
+  font-size: clamp(24px, 5vw, 44px);
+  color: #ff3366;
+  font-weight: bold;
+  letter-spacing: 3px;
+}
+#game-over .go-score {
+  font-size: 20px;
+  color: #ccc;
+}
+#game-over .go-best {
+  font-size: 14px;
+  color: #666;
+}
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+<canvas id="c"></canvas>
+
+<div id="overlay" class="active">
+  <div id="menu">
+    <div id="title">Fractal Flight</div>
+    <div id="subtitle">navigate the infinite tunnel</div>
+    <button id="start-btn">Enter</button>
+  </div>
+  <div id="game-over">
+    <div class="go-title">COLLISION</div>
+    <div class="go-score" id="final-score"></div>
+    <div class="go-best" id="final-best"></div>
+    <button id="start-btn2" style="padding:12px 40px;font-size:16px;font-family:'Courier New',monospace;background:transparent;color:#00ffff;border:2px solid #00ffff;cursor:pointer;letter-spacing:3px;text-transform:uppercase;margin-top:10px;transition:all 0.3s;">Retry</button>
+  </div>
+</div>
+
+<div id="hud">
+  <div class="score" id="score-display">0</div>
+  <div class="best" id="best-display"></div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// State
+let state = 'menu'; // menu | playing | dead
+let score = 0;
+let bestScore = parseInt(localStorage.getItem('ff-best') || '0');
+let time = 0;
+let speed = 1;
+let playerX = 0; // -1 to 1
+let playerY = 0; // -1 to 1
+let targetX = 0;
+let targetY = 0;
+let shakeT = 0;
+let deathFlash = 0;
+
+// Tunnel rings
+const RING_COUNT = 60;
+const RING_SPACING = 2.5;
+let rings = [];
+let ringOffset = 0;
+
+// Particles
+let particles = [];
+let shards = [];
+
+// Color cycling
+function hslColor(h, s, l, a) {
+  return `hsla(${h % 360}, ${s}%, ${l}%, ${a})`;
+}
+
+function getThemeHue() {
+  return (time * 15) % 360;
+}
+
+// Generate ring shape
+function makeRing(z) {
+  const sides = 6 + Math.floor(Math.random() * 3) * 2; // 6, 8, or 10
+  const hasObstacle = Math.random() < 0.25 + score * 0.001;
+  let obstacleAngle = -1, obstacleSpan = 0;
+  if (hasObstacle) {
+    obstacleAngle = Math.random() * Math.PI * 2;
+    obstacleSpan = 0.6 + Math.random() * 0.8;
+  }
+  const hasShard = !hasObstacle && Math.random() < 0.3;
+  let shardAngle = hasShard ? Math.random() * Math.PI * 2 : 0;
+  let shardDist = hasShard ? 0.2 + Math.random() * 0.4 : 0;
+  
+  return {
+    z,
+    sides,
+    rotation: Math.random() * Math.PI * 2,
+    rotSpeed: (Math.random() - 0.5) * 0.3,
+    radius: 0.7 + Math.random() * 0.25,
+    hasObstacle,
+    obstacleAngle,
+    obstacleSpan,
+    hasShard,
+    shardAngle,
+    shardDist,
+    shardCollected: false,
+    pulsePhase: Math.random() * Math.PI * 2,
+    scored: false
+  };
+}
+
+function initRings() {
+  rings = [];
+  for (let i = 0; i < RING_COUNT; i++) {
+    rings.push(makeRing(i * RING_SPACING));
+  }
+}
+
+// Project 3D to 2D
+function project(x, y, z) {
+  const fov = 1.5;
+  const d = Math.max(z, 0.1);
+  const scale = fov / d;
+  return {
+    x: W / 2 + x * scale * W * 0.4,
+    y: H / 2 + y * scale * H * 0.4,
+    scale
+  };
+}
+
+// Input
+let keys = {};
+let touch = null;
+let mousePos = null;
+
+window.addEventListener('keydown', e => { keys[e.key] = true; });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+canvas.addEventListener('mousemove', e => {
+  if (state === 'playing') {
+    mousePos = { x: (e.clientX / W - 0.5) * 2, y: (e.clientY / H - 0.5) * 2 };
+  }
+});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  mousePos = { x: (t.clientX / W - 0.5) * 2, y: (t.clientY / H - 0.5) * 2 };
+}, { passive: false });
+canvas.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  mousePos = { x: (t.clientX / W - 0.5) * 2, y: (t.clientY / H - 0.5) * 2 };
+}, { passive: false });
+canvas.addEventListener('touchend', () => { mousePos = null; });
+
+// Start game
+function startGame() {
+  state = 'playing';
+  score = 0;
+  time = 0;
+  speed = 1;
+  playerX = 0;
+  playerY = 0;
+  targetX = 0;
+  targetY = 0;
+  ringOffset = 0;
+  particles = [];
+  shards = [];
+  deathFlash = 0;
+  initRings();
+  
+  document.getElementById('overlay').classList.remove('active');
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('game-over').style.display = 'none';
+  document.getElementById('hud').classList.add('visible');
+  updateHUD();
+}
+
+function die() {
+  state = 'dead';
+  shakeT = 0.5;
+  deathFlash = 1;
+  
+  // Explosion particles
+  for (let i = 0; i < 80; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 1 + Math.random() * 4;
+    particles.push({
+      x: W / 2 + playerX * W * 0.15,
+      y: H / 2 + playerY * H * 0.15,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 1,
+      decay: 0.01 + Math.random() * 0.02,
+      size: 2 + Math.random() * 4,
+      hue: getThemeHue() + Math.random() * 60
+    });
+  }
+  
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('ff-best', bestScore);
+  }
+  
+  document.getElementById('hud').classList.remove('visible');
+  
+  setTimeout(() => {
+    document.getElementById('final-score').textContent = `Score: ${score}`;
+    document.getElementById('final-best').textContent = `Best: ${bestScore}`;
+    document.getElementById('overlay').classList.add('active');
+    document.getElementById('game-over').style.display = 'flex';
+  }, 800);
+}
+
+function updateHUD() {
+  document.getElementById('score-display').textContent = score;
+  if (bestScore > 0) {
+    document.getElementById('best-display').textContent = `best: ${bestScore}`;
+  }
+}
+
+// Buttons
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('start-btn2').addEventListener('click', startGame);
+document.getElementById('start-btn2').addEventListener('mouseenter', function() {
+  this.style.background = '#00ffff';
+  this.style.color = '#000';
+  this.style.boxShadow = '0 0 30px rgba(0,255,255,0.5)';
+});
+document.getElementById('start-btn2').addEventListener('mouseleave', function() {
+  this.style.background = 'transparent';
+  this.style.color = '#00ffff';
+  this.style.boxShadow = 'none';
+});
+
+// Main loop
+let lastT = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((ts - lastT) / 1000, 0.05);
+  lastT = ts;
+  
+  // Clear with trail effect
+  ctx.fillStyle = state === 'menu' ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.12)';
+  ctx.fillRect(0, 0, W, H);
+  
+  const hue = getThemeHue();
+  
+  if (state === 'playing') {
+    time += dt;
+    speed = 1 + time * 0.03; // gradually increases
+    
+    // Input
+    const moveSpeed = 2.5 * dt;
+    if (keys['ArrowLeft'] || keys['a'] || keys['A']) targetX -= moveSpeed;
+    if (keys['ArrowRight'] || keys['d'] || keys['D']) targetX += moveSpeed;
+    if (keys['ArrowUp'] || keys['w'] || keys['W']) targetY -= moveSpeed;
+    if (keys['ArrowDown'] || keys['s'] || keys['S']) targetY += moveSpeed;
+    
+    if (mousePos) {
+      targetX = mousePos.x * 0.85;
+      targetY = mousePos.y * 0.85;
+    }
+    
+    targetX = Math.max(-0.9, Math.min(0.9, targetX));
+    targetY = Math.max(-0.9, Math.min(0.9, targetY));
+    playerX += (targetX - playerX) * 8 * dt;
+    playerY += (targetY - playerY) * 8 * dt;
+    
+    // Advance rings
+    const advance = speed * 4 * dt;
+    ringOffset += advance;
+    
+    for (let r of rings) {
+      r.z -= advance;
+      r.rotation += r.rotSpeed * dt;
+    }
+    
+    // Recycle rings that passed the camera
+    while (rings.length > 0 && rings[0].z < -1) {
+      rings.shift();
+      const lastZ = rings.length > 0 ? rings[rings.length - 1].z : 0;
+      rings.push(makeRing(lastZ + RING_SPACING));
+    }
+    
+    // Collision & scoring
+    for (let r of rings) {
+      if (r.z > 0.3 && r.z < 1.5) {
+        // Check scoring
+        if (!r.scored && r.z < 1.0) {
+          r.scored = true;
+          score++;
+          updateHUD();
+        }
+        
+        // Check obstacle collision
+        if (r.hasObstacle && r.z < 1.0 && r.z > 0.3) {
+          const playerAngle = Math.atan2(playerY, playerX);
+          const playerDist = Math.sqrt(playerX * playerX + playerY * playerY);
+          
+          let angleDiff = playerAngle - r.obstacleAngle;
+          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+          
+          const obstacleInner = r.radius * 0.3;
+          const obstacleOuter = r.radius;
+          
+          if (Math.abs(angleDiff) < r.obstacleSpan / 2 &&
+              playerDist > obstacleInner && playerDist < obstacleOuter) {
+            die();
+          }
+        }
+        
+        // Check shard collection
+        if (r.hasShard && !r.shardCollected && r.z < 1.2 && r.z > 0.3) {
+          const sx = Math.cos(r.shardAngle) * r.shardDist;
+          const sy = Math.sin(r.shardAngle) * r.shardDist;
+          const dx = playerX - sx;
+          const dy = playerY - sy;
+          if (Math.sqrt(dx * dx + dy * dy) < 0.15) {
+            r.shardCollected = true;
+            score += 5;
+            updateHUD();
+            // Shard collect particles
+            const proj = project(sx, sy, r.z);
+            for (let i = 0; i < 15; i++) {
+              const a = Math.random() * Math.PI * 2;
+              particles.push({
+                x: proj.x, y: proj.y,
+                vx: Math.cos(a) * (1 + Math.random() * 2),
+                vy: Math.sin(a) * (1 + Math.random() * 2),
+                life: 1, decay: 0.03 + Math.random() * 0.02,
+                size: 2 + Math.random() * 3,
+                hue: 50 + Math.random() * 30
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    // Speed trail particles
+    if (Math.random() < 0.3 + speed * 0.1) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 0.5 + Math.random() * 0.3;
+      particles.push({
+        x: W / 2 + Math.cos(a) * r * W * 0.3,
+        y: H / 2 + Math.sin(a) * r * H * 0.3,
+        vx: (Math.cos(a) * 0.3),
+        vy: (Math.sin(a) * 0.3),
+        life: 0.6,
+        decay: 0.015,
+        size: 1 + Math.random() * 1.5,
+        hue: hue + 120 + Math.random() * 40
+      });
+    }
+  }
+  
+  // Shake
+  let shakeX = 0, shakeY = 0;
+  if (shakeT > 0) {
+    shakeT -= dt;
+    const intensity = shakeT * 20;
+    shakeX = (Math.random() - 0.5) * intensity;
+    shakeY = (Math.random() - 0.5) * intensity;
+  }
+  
+  // Death flash
+  if (deathFlash > 0) {
+    deathFlash -= dt * 3;
+    ctx.fillStyle = `rgba(255,50,100,${deathFlash * 0.4})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+  
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+  
+  // Draw rings (back to front)
+  for (let i = rings.length - 1; i >= 0; i--) {
+    const r = rings[i];
+    if (r.z < 0.2 || r.z > 80) continue;
+    
+    const depth = r.z / (RING_COUNT * RING_SPACING);
+    const alpha = Math.max(0, 1 - depth * 1.2) * (r.z < 1 ? r.z : 1);
+    if (alpha < 0.01) continue;
+    
+    const pulse = 1 + Math.sin(time * 3 + r.pulsePhase) * 0.05;
+    const ringHue = hue + r.z * 3;
+    
+    // Draw polygon ring
+    ctx.beginPath();
+    for (let s = 0; s <= r.sides; s++) {
+      const a = (s / r.sides) * Math.PI * 2 + r.rotation;
+      const rx = Math.cos(a) * r.radius * pulse;
+      const ry = Math.sin(a) * r.radius * pulse;
+      const p = project(rx, ry, r.z);
+      if (s === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = hslColor(ringHue, 80, 55, alpha * 0.7);
+    ctx.lineWidth = Math.max(0.5, 3 * (1 - depth));
+    ctx.stroke();
+    
+    // Glow on close rings
+    if (r.z < 8) {
+      ctx.strokeStyle = hslColor(ringHue, 90, 60, alpha * 0.15);
+      ctx.lineWidth = Math.max(1, 8 * (1 - depth));
+      ctx.stroke();
+    }
+    
+    // Draw obstacle
+    if (r.hasObstacle) {
+      ctx.beginPath();
+      const segments = 20;
+      const startA = r.obstacleAngle - r.obstacleSpan / 2 + r.rotation;
+      const endA = r.obstacleAngle + r.obstacleSpan / 2 + r.rotation;
+      
+      // Outer arc
+      for (let s = 0; s <= segments; s++) {
+        const a = startA + (endA - startA) * (s / segments);
+        const ox = Math.cos(a) * r.radius * pulse;
+        const oy = Math.sin(a) * r.radius * pulse;
+        const p = project(ox, oy, r.z);
+        if (s === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      // Inner arc back
+      for (let s = segments; s >= 0; s--) {
+        const a = startA + (endA - startA) * (s / segments);
+        const ox = Math.cos(a) * r.radius * 0.3 * pulse;
+        const oy = Math.sin(a) * r.radius * 0.3 * pulse;
+        const p = project(ox, oy, r.z);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+      
+      const dangerAlpha = alpha * (0.5 + Math.sin(time * 6 + r.z) * 0.2);
+      ctx.fillStyle = hslColor(0, 80, 50, dangerAlpha * 0.4);
+      ctx.fill();
+      ctx.strokeStyle = hslColor(0, 90, 60, dangerAlpha * 0.8);
+      ctx.lineWidth = Math.max(0.5, 2 * (1 - depth));
+      ctx.stroke();
+    }
+    
+    // Draw shard
+    if (r.hasShard && !r.shardCollected) {
+      const sx = Math.cos(r.shardAngle) * r.shardDist;
+      const sy = Math.sin(r.shardAngle) * r.shardDist;
+      const sp = project(sx, sy, r.z);
+      const sz = Math.max(2, 10 * (1 - depth));
+      
+      ctx.save();
+      ctx.translate(sp.x, sp.y);
+      ctx.rotate(time * 3);
+      
+      // Diamond shape
+      ctx.beginPath();
+      ctx.moveTo(0, -sz);
+      ctx.lineTo(sz * 0.6, 0);
+      ctx.lineTo(0, sz);
+      ctx.lineTo(-sz * 0.6, 0);
+      ctx.closePath();
+      
+      ctx.fillStyle = hslColor(50, 100, 70, alpha * 0.9);
+      ctx.fill();
+      ctx.strokeStyle = hslColor(40, 100, 90, alpha);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      
+      // Glow
+      ctx.shadowColor = hslColor(50, 100, 70, 1);
+      ctx.shadowBlur = 12;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      
+      ctx.restore();
+    }
+  }
+  
+  // Draw player (centered crosshair/ship)
+  if (state === 'playing') {
+    const px = W / 2 + playerX * W * 0.15;
+    const py = H / 2 + playerY * H * 0.15;
+    const shipHue = hue + 180;
+    
+    // Ship glow
+    const grad = ctx.createRadialGradient(px, py, 0, px, py, 25);
+    grad.addColorStop(0, hslColor(shipHue, 100, 70, 0.3));
+    grad.addColorStop(1, hslColor(shipHue, 100, 70, 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(px, py, 25, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Ship triangle
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(6, 6);
+    ctx.lineTo(-6, 6);
+    ctx.closePath();
+    ctx.fillStyle = hslColor(shipHue, 90, 80, 0.9);
+    ctx.fill();
+    ctx.strokeStyle = hslColor(shipHue, 100, 95, 1);
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+    
+    // Engine trail
+    for (let i = 0; i < 2; i++) {
+      particles.push({
+        x: px + (Math.random() - 0.5) * 4,
+        y: py + 8 + Math.random() * 4,
+        vx: (Math.random() - 0.5) * 0.5,
+        vy: 0.5 + Math.random(),
+        life: 0.5 + Math.random() * 0.3,
+        decay: 0.03,
+        size: 1.5 + Math.random() * 2,
+        hue: shipHue + Math.random() * 30
+      });
+    }
+  }
+  
+  // Draw & update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= p.decay;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fillStyle = hslColor(p.hue, 90, 65, p.life * 0.8);
+    ctx.fill();
+  }
+  
+  // Vignette
+  const vgrad = ctx.createRadialGradient(W / 2, H / 2, W * 0.25, W / 2, H / 2, W * 0.7);
+  vgrad.addColorStop(0, 'rgba(0,0,0,0)');
+  vgrad.addColorStop(1, 'rgba(0,0,0,0.6)');
+  ctx.fillStyle = vgrad;
+  ctx.fillRect(0, 0, W, H);
+  
+  ctx.restore();
+  
+  // Background stars (menu only for ambiance)
+  if (state === 'menu') {
+    drawMenuTunnel(hue, dt);
+  }
+}
+
+// Ambient tunnel animation for menu
+let menuTime = 0;
+function drawMenuTunnel(hue, dt) {
+  menuTime += dt;
+  for (let i = 40; i > 0; i--) {
+    const z = i * 2 + ((menuTime * 2) % 2);
+    const depth = i / 40;
+    const alpha = (1 - depth) * 0.3;
+    const sides = 6;
+    const rot = menuTime * 0.2 + i * 0.1;
+    const rad = 0.7;
+    
+    ctx.beginPath();
+    for (let s = 0; s <= sides; s++) {
+      const a = (s / sides) * Math.PI * 2 + rot;
+      const rx = Math.cos(a) * rad;
+      const ry = Math.sin(a) * rad;
+      const p = project(rx, ry, z);
+      if (s === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = hslColor(hue + i * 5, 70, 50, alpha);
+    ctx.lineWidth = Math.max(0.5, 2 * (1 - depth));
+    ctx.stroke();
+  }
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
