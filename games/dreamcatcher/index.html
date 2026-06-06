@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Dreamcatcher — monday arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #050510;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #6644cc; text-decoration: none; font-size: 13px; z-index: 100;
+}
+.back-link:hover { color: #aa88ff; }
+#header {
+  text-align: center; margin-bottom: 6px;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #333355;
+}
+#header h1 {
+  font-size: 2rem; letter-spacing: 0.25em; text-transform: uppercase;
+  background: linear-gradient(90deg, #8855ff, #44ccff, #ff66aa);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; margin-bottom: 2px;
+}
+canvas { display: block; border-radius: 8px; }
+#hud {
+  position: fixed; top: 12px; right: 16px;
+  font-size: 14px; color: #aa88ff; z-index: 100;
+  text-align: right; line-height: 1.6;
+}
+#startScreen {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 200; background: rgba(5,5,16,0.95);
+  cursor: pointer;
+}
+#startScreen h2 {
+  font-size: 2.5rem; letter-spacing: 0.3em;
+  background: linear-gradient(90deg, #8855ff, #44ccff, #ff66aa);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; margin-bottom: 12px;
+}
+#startScreen p { color: #6666aa; font-size: 0.85rem; margin: 4px 0; }
+#startScreen .start-hint {
+  margin-top: 28px; color: #8866ee; font-size: 0.75rem;
+  letter-spacing: 0.2em; animation: pulse 2s infinite;
+}
+#gameOver {
+  position: absolute; inset: 0;
+  display: none; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 200; background: rgba(5,5,16,0.92);
+  cursor: pointer;
+}
+#gameOver h2 {
+  font-size: 2rem; color: #ff66aa; letter-spacing: 0.2em; margin-bottom: 8px;
+}
+#gameOver .final-score { font-size: 1.6rem; color: #44ccff; margin-bottom: 6px; }
+#gameOver .restart-hint {
+  margin-top: 20px; color: #8866ee; font-size: 0.75rem;
+  letter-spacing: 0.2em; animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← arcade</a>
+<div id="header"><h1>Dreamcatcher</h1></div>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div id="scoreDisplay">0</div>
+  <div id="comboDisplay"></div>
+  <div id="levelDisplay">Level 1</div>
+</div>
+
+<div id="startScreen">
+  <h2>DREAMCATCHER</h2>
+  <p>🕸️ Weave threads between anchor points</p>
+  <p>Catch the drifting dream orbs in your web</p>
+  <p>Match thread colors to orb colors for bonus points</p>
+  <p class="start-hint">[ TAP TO BEGIN ]</p>
+</div>
+
+<div id="gameOver">
+  <h2>DREAM FADED</h2>
+  <div class="final-score" id="finalScore">0</div>
+  <div id="orbsCaught" style="color:#aa88ff;font-size:0.9rem;margin-top:4px;"></div>
+  <div id="longestWeb" style="color:#6688cc;font-size:0.8rem;margin-top:2px;"></div>
+  <p class="restart-hint">[ TAP TO DREAM AGAIN ]</p>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// Sizing
+function resize() {
+  const s = Math.min(window.innerWidth - 20, window.innerHeight - 100, 600);
+  canvas.width = s; canvas.height = s;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Colors
+const PALETTE = [
+  { name: 'violet', hex: '#aa55ff', r: 170, g: 85, b: 255 },
+  { name: 'cyan', hex: '#44ccff', r: 68, g: 204, b: 255 },
+  { name: 'rose', hex: '#ff66aa', r: 255, g: 102, b: 170 },
+  { name: 'gold', hex: '#ffcc33', r: 255, g: 204, b: 51 },
+  { name: 'mint', hex: '#44ffaa', r: 68, g: 255, b: 170 },
+];
+
+// State
+let anchors = [];
+let threads = [];
+let orbs = [];
+let particles = [];
+let bgStars = [];
+let score = 0;
+let combo = 0;
+let comboTimer = 0;
+let orbsCaught = 0;
+let maxThreads = 0;
+let level = 1;
+let orbSpeed = 0.3;
+let missedOrbs = 0;
+let maxMissed = 5;
+let gameRunning = false;
+let selectedAnchor = null;
+let dragLine = null;
+let lastTime = 0;
+let spawnTimer = 0;
+let spawnInterval = 2.5;
+let glowPhase = 0;
+let shakeAmount = 0;
+
+// Generate stars
+function initStars() {
+  bgStars = [];
+  for (let i = 0; i < 80; i++) {
+    bgStars.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: Math.random() * 1.2 + 0.3,
+      a: Math.random(),
+      speed: Math.random() * 0.003 + 0.001,
+    });
+  }
+}
+
+function generateAnchors() {
+  anchors = [];
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const count = 8 + Math.min(level, 6);
+  const radius = canvas.width * 0.38;
+  // Ring anchors
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+    const r = radius + Math.sin(i * 1.7) * 20;
+    anchors.push({
+      x: cx + Math.cos(angle) * r,
+      y: cy + Math.sin(angle) * r,
+      color: PALETTE[i % PALETTE.length],
+      pulse: Math.random() * Math.PI * 2,
+      radius: 10,
+    });
+  }
+  // Inner anchors (from level 3)
+  if (level >= 3) {
+    const inner = Math.min(level - 1, 5);
+    for (let i = 0; i < inner; i++) {
+      const angle = (i / inner) * Math.PI * 2 + 0.3;
+      const r = radius * 0.45;
+      anchors.push({
+        x: cx + Math.cos(angle) * r,
+        y: cy + Math.sin(angle) * r,
+        color: PALETTE[(i + 2) % PALETTE.length],
+        pulse: Math.random() * Math.PI * 2,
+        radius: 8,
+      });
+    }
+  }
+}
+
+function spawnOrb() {
+  const color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  const side = Math.floor(Math.random() * 4);
+  let x, y, vx, vy;
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const speed = orbSpeed + Math.random() * 0.15;
+  
+  switch (side) {
+    case 0: // top
+      x = Math.random() * canvas.width; y = -20;
+      break;
+    case 1: // right
+      x = canvas.width + 20; y = Math.random() * canvas.height;
+      break;
+    case 2: // bottom
+      x = Math.random() * canvas.width; y = canvas.height + 20;
+      break;
+    case 3: // left
+      x = -20; y = Math.random() * canvas.height;
+      break;
+  }
+  
+  // Aim loosely toward center
+  const angle = Math.atan2(cy - y + (Math.random() - 0.5) * 200, cx - x + (Math.random() - 0.5) * 200);
+  vx = Math.cos(angle) * speed;
+  vy = Math.sin(angle) * speed;
+  
+  orbs.push({
+    x, y, vx, vy, color, radius: 12 + Math.random() * 4,
+    glow: 0, caught: false, trail: [],
+    life: 0,
+  });
+}
+
+function addParticles(x, y, color, count = 15) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      color,
+      life: 1,
+      decay: 0.015 + Math.random() * 0.02,
+      size: Math.random() * 4 + 1,
+    });
+  }
+}
+
+function addCatchParticles(x, y, color) {
+  for (let i = 0; i < 30; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 5 + 2;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      color,
+      life: 1,
+      decay: 0.01 + Math.random() * 0.015,
+      size: Math.random() * 5 + 2,
+    });
+  }
+}
+
+// Check if orb intersects any thread
+function checkOrbCatch(orb) {
+  for (const thread of threads) {
+    const dist = pointToSegmentDist(orb.x, orb.y, thread.a.x, thread.a.y, thread.b.x, thread.b.y);
+    if (dist < orb.radius + 6) {
+      const colorMatch = thread.color.name === orb.color.name;
+      let points = 10 * level;
+      if (colorMatch) points *= 3;
+      combo++;
+      comboTimer = 120;
+      if (combo > 1) points *= Math.min(combo, 8);
+      score += points;
+      orbsCaught++;
+      orb.caught = true;
+      
+      addCatchParticles(orb.x, orb.y, orb.color.hex);
+      
+      // Pulse the thread
+      thread.catchGlow = 1;
+      
+      // Pulse connected anchors
+      thread.a.catchPulse = 1;
+      thread.b.catchPulse = 1;
+      
+      return true;
+    }
+  }
+  return false;
+}
+
+function pointToSegmentDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function getAnchorAt(x, y) {
+  for (const a of anchors) {
+    if (Math.hypot(x - a.x, y - a.y) < a.radius + 16) return a;
+  }
+  return null;
+}
+
+function threadExists(a, b) {
+  return threads.some(t =>
+    (t.a === a && t.b === b) || (t.a === b && t.b === a)
+  );
+}
+
+// Input
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches ? e.touches[0] : e;
+  return {
+    x: (touch.clientX - rect.left) * (canvas.width / rect.width),
+    y: (touch.clientY - rect.top) * (canvas.height / rect.height),
+  };
+}
+
+canvas.addEventListener('mousedown', onDown);
+canvas.addEventListener('touchstart', onDown, { passive: false });
+canvas.addEventListener('mousemove', onMove);
+canvas.addEventListener('touchmove', onMove, { passive: false });
+canvas.addEventListener('mouseup', onUp);
+canvas.addEventListener('touchend', onUp);
+
+function onDown(e) {
+  e.preventDefault();
+  if (!gameRunning) return;
+  const pos = getPos(e);
+  const anchor = getAnchorAt(pos.x, pos.y);
+  if (anchor) {
+    selectedAnchor = anchor;
+    dragLine = pos;
+    addParticles(anchor.x, anchor.y, anchor.color.hex, 8);
+  }
+}
+
+function onMove(e) {
+  e.preventDefault();
+  if (selectedAnchor && dragLine) {
+    dragLine = getPos(e);
+  }
+}
+
+function onUp(e) {
+  e.preventDefault();
+  if (!selectedAnchor || !dragLine) { selectedAnchor = null; dragLine = null; return; }
+  const pos = e.changedTouches ? {
+    x: (e.changedTouches[0].clientX - canvas.getBoundingClientRect().left) * (canvas.width / canvas.getBoundingClientRect().width),
+    y: (e.changedTouches[0].clientY - canvas.getBoundingClientRect().top) * (canvas.height / canvas.getBoundingClientRect().height),
+  } : getPos(e);
+  
+  const target = getAnchorAt(pos.x, pos.y);
+  if (target && target !== selectedAnchor && !threadExists(selectedAnchor, target)) {
+    // Blend colors
+    const c1 = selectedAnchor.color;
+    const c2 = target.color;
+    const blended = c1.name === c2.name ? c1 : {
+      name: c1.name,
+      hex: c1.hex,
+      r: (c1.r + c2.r) / 2,
+      g: (c1.g + c2.g) / 2,
+      b: (c1.b + c2.b) / 2,
+    };
+    
+    threads.push({
+      a: selectedAnchor, b: target,
+      color: blended,
+      age: 0,
+      catchGlow: 0,
+      shimmer: Math.random() * Math.PI * 2,
+    });
+    maxThreads = Math.max(maxThreads, threads.length);
+    addParticles(target.x, target.y, target.color.hex, 8);
+    
+    // Level up
+    const threadThreshold = 10 + level * 3;
+    if (threads.length >= threadThreshold) {
+      level++;
+      orbSpeed = 0.3 + level * 0.08;
+      spawnInterval = Math.max(0.8, 2.5 - level * 0.15);
+      generateAnchors();
+      threads = [];
+      addParticles(canvas.width / 2, canvas.height / 2, '#ffffff', 40);
+      document.getElementById('levelDisplay').textContent = 'Level ' + level;
+    }
+  }
+  selectedAnchor = null;
+  dragLine = null;
+}
+
+// Draw
+function drawStars() {
+  for (const s of bgStars) {
+    s.a += s.speed;
+    const a = (Math.sin(s.a) + 1) / 2 * 0.6 + 0.1;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(150,150,255,${a})`;
+    ctx.fill();
+  }
+}
+
+function drawAnchors() {
+  for (const a of anchors) {
+    a.pulse += 0.03;
+    if (a.catchPulse) a.catchPulse *= 0.95;
+    
+    const pulseR = a.radius + Math.sin(a.pulse) * 2 + (a.catchPulse || 0) * 15;
+    
+    // Glow
+    const grad = ctx.createRadialGradient(a.x, a.y, 0, a.x, a.y, pulseR * 3);
+    grad.addColorStop(0, a.color.hex + '44');
+    grad.addColorStop(1, 'transparent');
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, pulseR * 3, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    
+    // Core
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, pulseR, 0, Math.PI * 2);
+    ctx.fillStyle = a.color.hex;
+    ctx.shadowColor = a.color.hex;
+    ctx.shadowBlur = 15 + (a.catchPulse || 0) * 30;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    
+    // Inner white
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, pulseR * 0.4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fill();
+  }
+}
+
+function drawThreads() {
+  for (const t of threads) {
+    t.age++;
+    t.shimmer += 0.02;
+    if (t.catchGlow > 0) t.catchGlow *= 0.97;
+    
+    const glow = 4 + t.catchGlow * 20;
+    const alpha = Math.min(t.age / 30, 1);
+    
+    ctx.beginPath();
+    ctx.moveTo(t.a.x, t.a.y);
+    
+    // Slight wave
+    const mx = (t.a.x + t.b.x) / 2;
+    const my = (t.a.y + t.b.y) / 2;
+    const dx = t.b.x - t.a.x;
+    const dy = t.b.y - t.a.y;
+    const nx = -dy * 0.03 * Math.sin(t.shimmer);
+    const ny = dx * 0.03 * Math.sin(t.shimmer);
+    
+    ctx.quadraticCurveTo(mx + nx, my + ny, t.b.x, t.b.y);
+    
+    const r = Math.round(t.color.r);
+    const g = Math.round(t.color.g);
+    const b = Math.round(t.color.b);
+    
+    ctx.strokeStyle = `rgba(${r},${g},${b},${alpha * 0.9})`;
+    ctx.lineWidth = 2 + t.catchGlow * 4;
+    ctx.shadowColor = t.color.hex;
+    ctx.shadowBlur = glow;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    
+    // Traveling light dot
+    const dotT = (Math.sin(t.shimmer * 3) + 1) / 2;
+    const dotX = t.a.x + (t.b.x - t.a.x) * dotT;
+    const dotY = t.a.y + (t.b.y - t.a.y) * dotT;
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, 2 + t.catchGlow * 3, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${0.6 * alpha})`;
+    ctx.fill();
+  }
+}
+
+function drawOrbs() {
+  for (const orb of orbs) {
+    if (orb.caught) continue;
+    
+    // Trail
+    orb.trail.push({ x: orb.x, y: orb.y });
+    if (orb.trail.length > 12) orb.trail.shift();
+    
+    for (let i = 0; i < orb.trail.length; i++) {
+      const t = orb.trail[i];
+      const a = (i / orb.trail.length) * 0.3;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, orb.radius * 0.5, 0, Math.PI * 2);
+      ctx.fillStyle = orb.color.hex + Math.round(a * 255).toString(16).padStart(2, '0');
+      ctx.fill();
+    }
+    
+    // Outer glow
+    const grad = ctx.createRadialGradient(orb.x, orb.y, 0, orb.x, orb.y, orb.radius * 3);
+    grad.addColorStop(0, orb.color.hex + '33');
+    grad.addColorStop(1, 'transparent');
+    ctx.beginPath();
+    ctx.arc(orb.x, orb.y, orb.radius * 3, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    
+    // Core
+    orb.glow += 0.05;
+    const r = orb.radius + Math.sin(orb.glow) * 2;
+    ctx.beginPath();
+    ctx.arc(orb.x, orb.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = orb.color.hex;
+    ctx.shadowColor = orb.color.hex;
+    ctx.shadowBlur = 20;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    
+    // Inner sparkle
+    ctx.beginPath();
+    ctx.arc(orb.x - r * 0.25, orb.y - r * 0.25, r * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fill();
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fillStyle = p.color + Math.round(p.life * 200).toString(16).padStart(2, '0');
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawDragLine() {
+  if (!selectedAnchor || !dragLine) return;
+  ctx.beginPath();
+  ctx.moveTo(selectedAnchor.x, selectedAnchor.y);
+  ctx.lineTo(dragLine.x, dragLine.y);
+  ctx.strokeStyle = selectedAnchor.color.hex + '88';
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = selectedAnchor.color.hex;
+  ctx.shadowBlur = 8;
+  ctx.setLineDash([6, 6]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.shadowBlur = 0;
+}
+
+function drawMissedIndicator() {
+  const barW = 120;
+  const barH = 4;
+  const x = canvas.width / 2 - barW / 2;
+  const y = canvas.height - 16;
+  
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(x, y, barW, barH);
+  
+  const fill = missedOrbs / maxMissed;
+  const grad = ctx.createLinearGradient(x, y, x + barW * fill, y);
+  grad.addColorStop(0, '#44ccff');
+  grad.addColorStop(1, fill > 0.7 ? '#ff4444' : '#ff66aa');
+  ctx.fillStyle = grad;
+  ctx.fillRect(x, y, barW * fill, barH);
+}
+
+// Main loop
+function update(dt) {
+  if (!gameRunning) return;
+  
+  glowPhase += 0.01;
+  
+  // Spawn orbs
+  spawnTimer += dt;
+  if (spawnTimer >= spawnInterval) {
+    spawnOrb();
+    spawnTimer = 0;
+  }
+  
+  // Combo timer
+  if (comboTimer > 0) {
+    comboTimer--;
+    if (comboTimer <= 0) combo = 0;
+  }
+  
+  // Update orbs
+  for (let i = orbs.length - 1; i >= 0; i--) {
+    const orb = orbs[i];
+    if (orb.caught) { orbs.splice(i, 1); continue; }
+    
+    orb.x += orb.vx;
+    orb.y += orb.vy;
+    orb.life++;
+    
+    // Check catch
+    if (checkOrbCatch(orb)) continue;
+    
+    // Check if out of bounds (missed)
+    if (orb.life > 60 && (orb.x < -40 || orb.x > canvas.width + 40 || orb.y < -40 || orb.y > canvas.height + 40)) {
+      missedOrbs++;
+      shakeAmount = 4;
+      orbs.splice(i, 1);
+      if (missedOrbs >= maxMissed) {
+        endGame();
+        return;
+      }
+    }
+  }
+  
+  // Shake
+  if (shakeAmount > 0) shakeAmount *= 0.9;
+  if (shakeAmount < 0.1) shakeAmount = 0;
+  
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.97;
+    p.vy *= 0.97;
+    p.life -= p.decay;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+  
+  // HUD
+  document.getElementById('scoreDisplay').textContent = score.toLocaleString();
+  document.getElementById('comboDisplay').textContent = combo > 1 ? `×${combo} combo` : '';
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // BG gradient
+  const bg = ctx.createRadialGradient(
+    canvas.width / 2, canvas.height / 2, 0,
+    canvas.width / 2, canvas.height / 2, canvas.width * 0.7
+  );
+  bg.addColorStop(0, '#0a0a24');
+  bg.addColorStop(1, '#050510');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Shake
+  if (shakeAmount > 0) {
+    ctx.save();
+    ctx.translate(
+      (Math.random() - 0.5) * shakeAmount,
+      (Math.random() - 0.5) * shakeAmount
+    );
+  }
+  
+  drawStars();
+  drawThreads();
+  drawOrbs();
+  drawAnchors();
+  drawDragLine();
+  drawParticles();
+  drawMissedIndicator();
+  
+  if (shakeAmount > 0) ctx.restore();
+}
+
+function gameLoop(time) {
+  const dt = Math.min((time - lastTime) / 1000, 0.05);
+  lastTime = time;
+  update(dt);
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+  score = 0; combo = 0; comboTimer = 0;
+  orbsCaught = 0; maxThreads = 0;
+  missedOrbs = 0; level = 1;
+  orbSpeed = 0.3; spawnInterval = 2.5;
+  threads = []; orbs = []; particles = [];
+  selectedAnchor = null; dragLine = null;
+  spawnTimer = 0;
+  
+  generateAnchors();
+  initStars();
+  gameRunning = true;
+  
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('gameOver').style.display = 'none';
+  document.getElementById('levelDisplay').textContent = 'Level 1';
+  document.getElementById('scoreDisplay').textContent = '0';
+  document.getElementById('comboDisplay').textContent = '';
+}
+
+function endGame() {
+  gameRunning = false;
+  document.getElementById('finalScore').textContent = score.toLocaleString();
+  document.getElementById('orbsCaught').textContent = `${orbsCaught} dreams caught`;
+  document.getElementById('longestWeb').textContent = `Longest web: ${maxThreads} threads`;
+  document.getElementById('gameOver').style.display = 'flex';
+}
+
+// Start
+document.getElementById('startScreen').addEventListener('click', startGame);
+document.getElementById('startScreen').addEventListener('touchstart', (e) => { e.preventDefault(); startGame(); });
+document.getElementById('gameOver').addEventListener('click', startGame);
+document.getElementById('gameOver').addEventListener('touchstart', (e) => { e.preventDefault(); startGame(); });
+
+lastTime = performance.now();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
