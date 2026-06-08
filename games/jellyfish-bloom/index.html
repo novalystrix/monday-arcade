@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Jellyfish Bloom — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #000810;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+a.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #4488cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  opacity: 0.7;
+}
+a.back-link:hover { opacity: 1; }
+canvas { display: block; border-radius: 8px; }
+#ui {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 20px;
+  z-index: 50;
+  pointer-events: none;
+}
+#ui span {
+  font-size: 16px;
+  text-shadow: 0 0 12px rgba(100, 180, 255, 0.6);
+  letter-spacing: 1px;
+}
+#overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  background: rgba(0, 8, 16, 0.85);
+  text-align: center;
+}
+#overlay h1 {
+  font-size: 42px;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, #40e0d0, #ff69b4, #8a2be2);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 3s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.4); }
+}
+#overlay .sub {
+  font-size: 14px;
+  color: #6699bb;
+  margin-bottom: 24px;
+}
+#overlay .score-display {
+  font-size: 22px;
+  color: #ff69b4;
+  margin-bottom: 16px;
+  text-shadow: 0 0 20px rgba(255, 105, 180, 0.5);
+}
+#overlay button {
+  background: linear-gradient(135deg, #1a3a5c, #2a1a4c);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  color: #88ccff;
+  padding: 14px 36px;
+  font-size: 16px;
+  font-family: inherit;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+#overlay button:hover {
+  background: linear-gradient(135deg, #2a4a6c, #3a2a5c);
+  border-color: rgba(100, 180, 255, 0.6);
+  box-shadow: 0 0 20px rgba(100, 180, 255, 0.3);
+}
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<a class="back-link" href="/">← Arcade</a>
+<div id="ui">
+  <span id="score-label">🪼 0</span>
+  <span id="depth-label">0m</span>
+</div>
+
+<div id="overlay">
+  <h1>🪼 Jellyfish Bloom</h1>
+  <div class="sub">Pulse through the luminous abyss</div>
+  <div class="score-display hidden" id="final-score"></div>
+  <button id="start-btn">Dive In</button>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('start-btn');
+const scoreLabel = document.getElementById('score-label');
+const depthLabel = document.getElementById('depth-label');
+const finalScore = document.getElementById('final-score');
+const overlayTitle = overlay.querySelector('h1');
+const overlaySub = overlay.querySelector('.sub');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- Audio synthesis ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playTone(freq, dur, vol = 0.08, type = 'sine') {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type;
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + dur);
+}
+function playCollect() {
+  playTone(523, 0.15, 0.06);
+  setTimeout(() => playTone(784, 0.2, 0.05), 80);
+}
+function playPulse() { playTone(110, 0.12, 0.03, 'triangle'); }
+function playHit() {
+  playTone(80, 0.3, 0.1, 'sawtooth');
+  playTone(60, 0.4, 0.08, 'square');
+}
+function playAmbient() {
+  if (!running) return;
+  const freq = 40 + Math.random() * 60;
+  playTone(freq, 2 + Math.random() * 2, 0.015, 'sine');
+  setTimeout(playAmbient, 3000 + Math.random() * 5000);
+}
+
+// --- Game state ---
+let running = false;
+let score = 0;
+let depth = 0;
+let combo = 1;
+let comboTimer = 0;
+let invincible = 0;
+let shakeTimer = 0;
+let difficulty = 1;
+let jellyfish, planktons, predators, particles, bgParticles, lightRays;
+
+class Jellyfish {
+  constructor() {
+    this.x = W / 2;
+    this.y = H * 0.6;
+    this.vx = 0;
+    this.vy = 0;
+    this.radius = 22;
+    this.pulsePhase = 0;
+    this.pulseStrength = 0;
+    this.tentaclePhase = 0;
+    this.glow = 0.6;
+    this.trail = [];
+    this.hue = 280;
+  }
+
+  pulse() {
+    this.vy -= 4.5;
+    this.pulseStrength = 1;
+    playPulse();
+  }
+
+  update(dt) {
+    // Gravity (sinking)
+    this.vy += 0.8 * dt;
+    // Water resistance
+    this.vx *= 0.96;
+    this.vy *= 0.97;
+    this.x += this.vx * dt * 60;
+    this.y += this.vy * dt * 60;
+
+    // Bounds
+    if (this.x < this.radius) { this.x = this.radius; this.vx *= -0.5; }
+    if (this.x > W - this.radius) { this.x = W - this.radius; this.vx *= -0.5; }
+    if (this.y < this.radius + 40) { this.y = this.radius + 40; this.vy *= -0.3; }
+    if (this.y > H - this.radius) { this.y = H - this.radius; this.vy = -1; }
+
+    this.pulsePhase += dt * 4;
+    this.pulseStrength *= 0.92;
+    this.tentaclePhase += dt * 2;
+    this.hue = 280 + Math.sin(depth * 0.001) * 60;
+    this.glow = 0.6 + this.pulseStrength * 0.4;
+
+    // Trail
+    this.trail.push({ x: this.x, y: this.y, a: 1, r: this.radius * 0.5 });
+    if (this.trail.length > 25) this.trail.shift();
+    this.trail.forEach(t => { t.a *= 0.92; t.r *= 0.97; });
+  }
+
+  draw() {
+    // Trail glow
+    this.trail.forEach(t => {
+      if (t.a < 0.05) return;
+      const g = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, t.r * 2);
+      g.addColorStop(0, `hsla(${this.hue}, 80%, 70%, ${t.a * 0.15})`);
+      g.addColorStop(1, 'transparent');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.r * 2, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    const pulseScale = 1 + Math.sin(this.pulsePhase) * 0.1 + this.pulseStrength * 0.3;
+    const r = this.radius * pulseScale;
+
+    // Outer glow
+    const glow = ctx.createRadialGradient(this.x, this.y, r * 0.3, this.x, this.y, r * 3);
+    glow.addColorStop(0, `hsla(${this.hue}, 80%, 65%, ${this.glow * 0.2})`);
+    glow.addColorStop(0.5, `hsla(${this.hue}, 60%, 50%, ${this.glow * 0.06})`);
+    glow.addColorStop(1, 'transparent');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r * 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bell (dome)
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r, r * 0.75, 0, Math.PI, 0);
+    const bellGrad = ctx.createRadialGradient(0, -r * 0.2, 0, 0, 0, r);
+    bellGrad.addColorStop(0, `hsla(${this.hue}, 90%, 80%, 0.7)`);
+    bellGrad.addColorStop(0.6, `hsla(${this.hue}, 70%, 55%, 0.4)`);
+    bellGrad.addColorStop(1, `hsla(${this.hue}, 50%, 30%, 0.15)`);
+    ctx.fillStyle = bellGrad;
+    ctx.fill();
+
+    // Inner pattern
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * Math.PI + this.pulsePhase * 0.3;
+      const ix = Math.cos(angle) * r * 0.35;
+      const iy = -Math.sin(angle) * r * 0.2 - r * 0.15;
+      ctx.beginPath();
+      ctx.arc(ix, iy, r * 0.08, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${this.hue + 40}, 100%, 85%, 0.5)`;
+      ctx.fill();
+    }
+
+    // Tentacles
+    ctx.strokeStyle = `hsla(${this.hue}, 60%, 70%, 0.35)`;
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 7; i++) {
+      const tx = (i - 3) * r * 0.28;
+      ctx.beginPath();
+      ctx.moveTo(tx, 0);
+      for (let j = 1; j <= 8; j++) {
+        const ty = j * r * 0.3;
+        const wave = Math.sin(this.tentaclePhase + i * 0.7 + j * 0.4) * (5 + j * 1.5);
+        ctx.lineTo(tx + wave, ty);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Invincibility shield
+    if (invincible > 0) {
+      ctx.strokeStyle = `hsla(180, 100%, 80%, ${0.3 + Math.sin(Date.now() * 0.01) * 0.15})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, r * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+class Plankton {
+  constructor() {
+    this.reset();
+  }
+  reset() {
+    this.x = Math.random() * W;
+    this.y = -20 - Math.random() * H * 0.5;
+    this.radius = 4 + Math.random() * 4;
+    this.hue = [50, 120, 180, 300, 30][Math.floor(Math.random() * 5)];
+    this.phase = Math.random() * Math.PI * 2;
+    this.speed = 0.3 + Math.random() * 0.4;
+    this.glow = 0.5 + Math.random() * 0.5;
+    this.type = Math.random() < 0.12 ? 'bloom' : 'normal'; // bloom = bonus
+  }
+  update(dt) {
+    this.y += this.speed * dt * 60;
+    this.x += Math.sin(this.phase + this.y * 0.008) * 0.6;
+    this.phase += dt * 1.5;
+    this.glow = 0.5 + Math.sin(this.phase * 2) * 0.3;
+    if (this.y > H + 20) this.reset();
+  }
+  draw() {
+    const r = this.radius;
+    const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, r * 3);
+    const lum = this.type === 'bloom' ? '85%' : '70%';
+    const alpha = this.type === 'bloom' ? 0.5 : 0.3;
+    g.addColorStop(0, `hsla(${this.hue}, 100%, ${lum}, ${this.glow * alpha * 2})`);
+    g.addColorStop(0.4, `hsla(${this.hue}, 80%, 50%, ${this.glow * alpha})`);
+    g.addColorStop(1, 'transparent');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r * 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = `hsla(${this.hue}, 100%, 90%, ${this.glow * 0.9})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (this.type === 'bloom') {
+      // Extra ring for bloom plankton
+      ctx.strokeStyle = `hsla(${this.hue}, 100%, 80%, ${this.glow * 0.3})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, r * 1.5 + Math.sin(this.phase * 3) * 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+class Predator {
+  constructor() {
+    this.reset();
+  }
+  reset() {
+    const side = Math.random() < 0.5;
+    this.x = side ? -30 : W + 30;
+    this.y = Math.random() * H * 0.7 + H * 0.1;
+    this.vx = side ? (1.2 + Math.random() * difficulty * 0.5) : -(1.2 + Math.random() * difficulty * 0.5);
+    this.vy = (Math.random() - 0.5) * 0.5;
+    this.radius = 14 + Math.random() * 8;
+    this.phase = Math.random() * Math.PI * 2;
+    this.type = Math.random() < 0.3 ? 'angler' : 'shadow';
+    this.alive = true;
+  }
+  update(dt) {
+    this.x += this.vx * dt * 60;
+    this.y += this.vy * dt * 60 + Math.sin(this.phase) * 0.3;
+    this.phase += dt * 2;
+    if ((this.vx > 0 && this.x > W + 50) || (this.vx < 0 && this.x < -50)) {
+      this.alive = false;
+    }
+  }
+  draw() {
+    const r = this.radius;
+    if (this.type === 'angler') {
+      // Angler fish with lure
+      const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, r * 2.5);
+      g.addColorStop(0, 'hsla(10, 80%, 30%, 0.6)');
+      g.addColorStop(0.5, 'hsla(10, 60%, 15%, 0.3)');
+      g.addColorStop(1, 'transparent');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, r * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Body
+      ctx.fillStyle = 'hsla(10, 50%, 20%, 0.7)';
+      ctx.beginPath();
+      ctx.ellipse(this.x, this.y, r, r * 0.7, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Lure light
+      const lx = this.x + (this.vx > 0 ? r * 1.3 : -r * 1.3);
+      const ly = this.y - r * 0.8 + Math.sin(this.phase * 3) * 3;
+      const lg = ctx.createRadialGradient(lx, ly, 0, lx, ly, 8);
+      lg.addColorStop(0, `hsla(50, 100%, 80%, ${0.7 + Math.sin(this.phase * 5) * 0.2})`);
+      lg.addColorStop(1, 'transparent');
+      ctx.fillStyle = lg;
+      ctx.beginPath();
+      ctx.arc(lx, ly, 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Eye
+      ctx.fillStyle = 'hsla(0, 100%, 50%, 0.8)';
+      ctx.beginPath();
+      ctx.arc(this.x + (this.vx > 0 ? r * 0.3 : -r * 0.3), this.y - r * 0.15, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Shadow predator
+      const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, r * 2);
+      g.addColorStop(0, 'hsla(260, 60%, 15%, 0.5)');
+      g.addColorStop(0.6, 'hsla(260, 40%, 8%, 0.3)');
+      g.addColorStop(1, 'transparent');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, r * 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'hsla(260, 50%, 12%, 0.7)';
+      ctx.beginPath();
+      ctx.ellipse(this.x, this.y, r * 1.2, r * 0.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Eyes
+      const eyeOff = this.vx > 0 ? 1 : -1;
+      ctx.fillStyle = 'hsla(180, 100%, 60%, 0.6)';
+      ctx.beginPath();
+      ctx.arc(this.x + eyeOff * r * 0.4, this.y - r * 0.1, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+class Particle {
+  constructor(x, y, hue) {
+    this.x = x; this.y = y;
+    this.vx = (Math.random() - 0.5) * 4;
+    this.vy = (Math.random() - 0.5) * 4;
+    this.life = 1;
+    this.hue = hue;
+    this.radius = 2 + Math.random() * 3;
+  }
+  update(dt) {
+    this.x += this.vx * dt * 60;
+    this.y += this.vy * dt * 60;
+    this.vx *= 0.97;
+    this.vy *= 0.97;
+    this.life -= dt * 1.5;
+  }
+  draw() {
+    if (this.life <= 0) return;
+    const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius * 2);
+    g.addColorStop(0, `hsla(${this.hue}, 100%, 80%, ${this.life * 0.6})`);
+    g.addColorStop(1, 'transparent');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius * 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// Background elements
+function createBgParticles() {
+  bgParticles = [];
+  for (let i = 0; i < 80; i++) {
+    bgParticles.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: 0.5 + Math.random() * 1.5,
+      speed: 0.1 + Math.random() * 0.3,
+      phase: Math.random() * Math.PI * 2,
+      hue: 180 + Math.random() * 60,
+      a: 0.1 + Math.random() * 0.25
+    });
+  }
+  lightRays = [];
+  for (let i = 0; i < 5; i++) {
+    lightRays.push({
+      x: Math.random() * W,
+      width: 30 + Math.random() * 60,
+      speed: 0.15 + Math.random() * 0.2,
+      a: 0.02 + Math.random() * 0.02
+    });
+  }
+}
+
+function drawBackground(dt) {
+  // Deep sea gradient
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  const depthFactor = Math.min(depth / 5000, 1);
+  bg.addColorStop(0, `hsl(210, ${50 - depthFactor * 20}%, ${8 - depthFactor * 5}%)`);
+  bg.addColorStop(0.5, `hsl(230, ${40 - depthFactor * 15}%, ${4 - depthFactor * 2}%)`);
+  bg.addColorStop(1, `hsl(250, ${30 - depthFactor * 10}%, ${2}%)`);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Light rays from above (fade with depth)
+  const rayAlpha = Math.max(0, 1 - depthFactor * 1.5);
+  if (rayAlpha > 0) {
+    lightRays.forEach(ray => {
+      ray.x += ray.speed;
+      if (ray.x > W + 100) ray.x = -100;
+      const g = ctx.createLinearGradient(ray.x, 0, ray.x, H * 0.7);
+      g.addColorStop(0, `rgba(100, 180, 230, ${ray.a * rayAlpha})`);
+      g.addColorStop(1, 'transparent');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(ray.x - ray.width / 2, 0);
+      ctx.lineTo(ray.x + ray.width / 2, 0);
+      ctx.lineTo(ray.x + ray.width * 0.8, H * 0.7);
+      ctx.lineTo(ray.x - ray.width * 0.3, H * 0.7);
+      ctx.fill();
+    });
+  }
+
+  // Floating particles
+  bgParticles.forEach(p => {
+    p.y += p.speed;
+    p.x += Math.sin(p.phase + p.y * 0.005) * 0.2;
+    p.phase += dt * 0.5;
+    if (p.y > H + 10) { p.y = -10; p.x = Math.random() * W; }
+    ctx.fillStyle = `hsla(${p.hue}, 60%, 60%, ${p.a + Math.sin(p.phase) * 0.08})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+// --- Controls ---
+let keys = {};
+let touchX = null;
+window.addEventListener('keydown', e => { keys[e.key] = true; });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  touchX = e.touches[0].clientX;
+  jellyfish?.pulse();
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  touchX = e.touches[0].clientX;
+}, { passive: false });
+canvas.addEventListener('touchend', () => { touchX = null; });
+canvas.addEventListener('mousedown', e => {
+  touchX = e.clientX;
+  jellyfish?.pulse();
+});
+canvas.addEventListener('mousemove', e => {
+  if (e.buttons) touchX = e.clientX;
+});
+canvas.addEventListener('mouseup', () => { touchX = null; });
+
+// --- Game loop ---
+let lastTime = 0;
+let spawnTimer = 0;
+let predatorTimer = 0;
+
+function init() {
+  jellyfish = new Jellyfish();
+  planktons = [];
+  predators = [];
+  particles = [];
+  score = 0;
+  depth = 0;
+  combo = 1;
+  comboTimer = 0;
+  invincible = 0;
+  shakeTimer = 0;
+  difficulty = 1;
+  spawnTimer = 0;
+  predatorTimer = 0;
+  createBgParticles();
+  for (let i = 0; i < 12; i++) {
+    const p = new Plankton();
+    p.y = Math.random() * H;
+    planktons.push(p);
+  }
+}
+
+function gameLoop(time) {
+  if (!running) return;
+  const dt = Math.min((time - lastTime) / 1000, 0.05);
+  lastTime = time;
+
+  // Controls
+  if (keys['ArrowLeft'] || keys['a']) jellyfish.vx -= 0.4;
+  if (keys['ArrowRight'] || keys['d']) jellyfish.vx += 0.4;
+  if (keys[' '] || keys['ArrowUp'] || keys['w']) {
+    if (!keys._pulsed) { jellyfish.pulse(); keys._pulsed = true; }
+  } else { keys._pulsed = false; }
+
+  if (touchX !== null) {
+    const dx = touchX - jellyfish.x;
+    jellyfish.vx += Math.sign(dx) * Math.min(Math.abs(dx) * 0.01, 0.6);
+  }
+
+  // Update
+  depth += dt * 30 * difficulty;
+  difficulty = 1 + depth / 2000;
+  jellyfish.update(dt);
+
+  // Combo decay
+  comboTimer -= dt;
+  if (comboTimer <= 0) combo = 1;
+
+  // Invincibility
+  if (invincible > 0) invincible -= dt;
+
+  // Shake
+  if (shakeTimer > 0) shakeTimer -= dt;
+
+  // Spawn plankton
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    planktons.push(new Plankton());
+    spawnTimer = 1.5 / difficulty;
+  }
+
+  // Spawn predators
+  predatorTimer -= dt;
+  if (predatorTimer <= 0) {
+    predators.push(new Predator());
+    predatorTimer = 3 / Math.sqrt(difficulty);
+  }
+
+  planktons.forEach(p => p.update(dt));
+  predators.forEach(p => p.update(dt));
+  predators = predators.filter(p => p.alive);
+  particles.forEach(p => p.update(dt));
+  particles = particles.filter(p => p.life > 0);
+
+  // Collision: plankton
+  for (let i = planktons.length - 1; i >= 0; i--) {
+    const p = planktons[i];
+    const dx = jellyfish.x - p.x;
+    const dy = jellyfish.y - p.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < jellyfish.radius + p.radius + 5) {
+      const pts = p.type === 'bloom' ? 25 * combo : 10 * combo;
+      score += Math.floor(pts);
+      combo = Math.min(combo + 0.5, 8);
+      comboTimer = 3;
+      playCollect();
+      // Particles
+      for (let j = 0; j < 8; j++) {
+        particles.push(new Particle(p.x, p.y, p.hue));
+      }
+      if (p.type === 'bloom') invincible = Math.max(invincible, 2);
+      planktons.splice(i, 1);
+    }
+  }
+
+  // Collision: predators
+  if (invincible <= 0) {
+    for (const p of predators) {
+      const dx = jellyfish.x - p.x;
+      const dy = jellyfish.y - p.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < jellyfish.radius + p.radius) {
+        // Game over
+        playHit();
+        running = false;
+        shakeTimer = 0.3;
+        for (let j = 0; j < 20; j++) {
+          particles.push(new Particle(jellyfish.x, jellyfish.y, jellyfish.hue));
+        }
+        showGameOver();
+        return;
+      }
+    }
+  }
+
+  // --- Draw ---
+  ctx.save();
+  if (shakeTimer > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * shakeTimer * 30,
+      (Math.random() - 0.5) * shakeTimer * 30
+    );
+  }
+
+  drawBackground(dt);
+  planktons.forEach(p => p.draw());
+  predators.forEach(p => p.draw());
+  jellyfish.draw();
+  particles.forEach(p => p.draw());
+
+  // Combo indicator
+  if (combo > 1) {
+    ctx.fillStyle = `hsla(50, 100%, 80%, ${0.4 + Math.sin(Date.now() * 0.005) * 0.2})`;
+    ctx.font = '14px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(`×${combo.toFixed(1)} COMBO`, jellyfish.x, jellyfish.y - jellyfish.radius * 2.5);
+  }
+
+  ctx.restore();
+
+  // UI
+  scoreLabel.textContent = `🪼 ${Math.floor(score)}`;
+  depthLabel.textContent = `${Math.floor(depth)}m`;
+
+  requestAnimationFrame(gameLoop);
+}
+
+function showGameOver() {
+  overlayTitle.textContent = '🌊 The Abyss Claims You';
+  overlaySub.textContent = `You reached ${Math.floor(depth)}m deep`;
+  finalScore.textContent = `Score: ${Math.floor(score)}`;
+  finalScore.classList.remove('hidden');
+  startBtn.textContent = 'Dive Again';
+  overlay.classList.remove('hidden');
+  // Render remaining particles
+  function fadeOut() {
+    if (running) return;
+    particles.forEach(p => { p.update(0.016); });
+    particles = particles.filter(p => p.life > 0);
+    drawBackground(0.016);
+    particles.forEach(p => p.draw());
+    if (particles.length > 0) requestAnimationFrame(fadeOut);
+  }
+  fadeOut();
+}
+
+startBtn.addEventListener('click', () => {
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  overlay.classList.add('hidden');
+  finalScore.classList.add('hidden');
+  init();
+  running = true;
+  lastTime = performance.now();
+  playAmbient();
+  requestAnimationFrame(gameLoop);
+});
+</script>
+</body>
+</html>
