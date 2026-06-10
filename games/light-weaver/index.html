@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Light Weaver</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a1a; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+canvas { display: block; }
+
+#ui-overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 10;
+}
+#ui-overlay > * { pointer-events: auto; }
+
+#hud {
+  position: absolute; top: 16px; left: 16px; right: 16px;
+  display: flex; justify-content: space-between; align-items: center;
+  color: #fff; font-size: 14px;
+}
+#hud .level-info { 
+  background: rgba(255,255,255,0.08); padding: 8px 18px; border-radius: 20px;
+  backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.1);
+}
+#hud .level-info span { color: #7df9ff; font-weight: 700; }
+#hud .targets-info {
+  background: rgba(255,255,255,0.08); padding: 8px 18px; border-radius: 20px;
+  backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.1);
+}
+#hud .targets-info .lit { color: #7aff7a; font-weight: 700; }
+
+#menu {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  text-align: center; color: #fff;
+}
+#menu h1 {
+  font-size: 52px; font-weight: 800; margin-bottom: 8px;
+  background: linear-gradient(135deg, #ff6b6b, #ffd93d, #6bff6b, #6bc5ff, #c56bff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; text-shadow: none;
+  animation: shimmer 3s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0%, 100% { filter: hue-rotate(0deg); }
+  50% { filter: hue-rotate(30deg); }
+}
+#menu p { color: rgba(255,255,255,0.5); margin-bottom: 32px; font-size: 16px; }
+#menu button {
+  background: linear-gradient(135deg, #7df9ff, #c56bff);
+  border: none; color: #0a0a1a; font-size: 18px; font-weight: 700;
+  padding: 14px 48px; border-radius: 30px; cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 30px rgba(125, 249, 255, 0.3);
+}
+#menu button:hover { transform: scale(1.05); box-shadow: 0 6px 40px rgba(125, 249, 255, 0.5); }
+
+#win-screen {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  text-align: center; color: #fff; display: none;
+}
+#win-screen h2 {
+  font-size: 42px; font-weight: 800; margin-bottom: 12px;
+  background: linear-gradient(135deg, #ffd93d, #ff6b6b, #c56bff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+#win-screen p { color: rgba(255,255,255,0.6); margin-bottom: 24px; }
+#win-screen button {
+  background: linear-gradient(135deg, #ffd93d, #ff6b6b);
+  border: none; color: #0a0a1a; font-size: 16px; font-weight: 700;
+  padding: 12px 40px; border-radius: 25px; cursor: pointer;
+  transition: transform 0.2s; margin: 0 8px;
+}
+#win-screen button:hover { transform: scale(1.05); }
+
+#tooltip {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: rgba(255,255,255,0.08); padding: 8px 20px; border-radius: 20px;
+  backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.6); font-size: 13px; display: none;
+  white-space: nowrap;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui-overlay">
+  <div id="hud" style="display:none">
+    <div class="level-info">Level <span id="level-num">1</span> / <span id="level-total">15</span></div>
+    <div class="targets-info"><span class="lit" id="lit-count">0</span> / <span id="target-count">0</span> targets</div>
+  </div>
+  <div id="menu">
+    <h1>🌈 Light Weaver</h1>
+    <p>Rotate mirrors & prisms to guide light beams onto every target</p>
+    <button onclick="startGame()">Play</button>
+  </div>
+  <div id="win-screen">
+    <h2>✨ Brilliant!</h2>
+    <p id="win-msg">All targets illuminated</p>
+    <button onclick="nextLevel()">Next Level →</button>
+    <button onclick="restartLevel()">Retry</button>
+  </div>
+  <div id="tooltip">Click a piece to select, then drag to rotate • Right-click to cycle type</div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+let W, H, CELL, COLS, ROWS, OX, OY;
+let state = 'menu'; // menu, playing, won, allDone
+let currentLevel = 0;
+let grid = [];
+let beamPaths = [];
+let particles = [];
+let selectedPiece = null;
+let animFrame = 0;
+let winTime = 0;
+
+// Piece types: 'source', 'mirror', 'splitter', 'prism', 'target', 'wall', 'empty'
+// Angles: 0=right, 90=down, 180=left, 270=up (degrees)
+
+const BEAM_COLORS = [
+  '#ff4444', '#ff8844', '#ffdd44', '#44ff44', '#44ddff', '#4488ff', '#aa44ff'
+];
+
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => { const k = (n + h / 30) % 12; return l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1); };
+  return `rgb(${Math.round(f(0)*255)},${Math.round(f(8)*255)},${Math.round(f(4)*255)})`;
+}
+
+function wavelengthToColor(angle) {
+  // Map beam angle to rainbow hue
+  return hslToHex((angle * 2) % 360, 100, 60);
+}
+
+// Level definitions: each is { cols, rows, pieces: [{type, x, y, angle, fixed, dir}] }
+const LEVELS = [
+  // Level 1: Simple mirror redirect
+  { cols: 7, rows: 7, pieces: [
+    { type: 'source', x: 0, y: 3, angle: 0, fixed: true },
+    { type: 'mirror', x: 3, y: 3, angle: 45, fixed: false },
+    { type: 'target', x: 3, y: 0, angle: 0, fixed: true },
+  ]},
+  // Level 2: Two mirrors
+  { cols: 7, rows: 7, pieces: [
+    { type: 'source', x: 0, y: 1, angle: 0, fixed: true },
+    { type: 'mirror', x: 4, y: 1, angle: 45, fixed: false },
+    { type: 'mirror', x: 4, y: 5, angle: 135, fixed: false },
+    { type: 'target', x: 0, y: 5, angle: 0, fixed: true },
+  ]},
+  // Level 3: Splitter intro
+  { cols: 8, rows: 8, pieces: [
+    { type: 'source', x: 0, y: 3, angle: 0, fixed: true },
+    { type: 'splitter', x: 4, y: 3, angle: 45, fixed: false },
+    { type: 'target', x: 7, y: 3, angle: 0, fixed: true },
+    { type: 'target', x: 4, y: 0, angle: 0, fixed: true },
+  ]},
+  // Level 4: Mirror chain
+  { cols: 8, rows: 8, pieces: [
+    { type: 'source', x: 0, y: 0, angle: 0, fixed: true },
+    { type: 'mirror', x: 6, y: 0, angle: 45, fixed: false },
+    { type: 'mirror', x: 6, y: 6, angle: 135, fixed: false },
+    { type: 'mirror', x: 1, y: 6, angle: 45, fixed: false },
+    { type: 'target', x: 1, y: 2, angle: 0, fixed: true },
+  ]},
+  // Level 5: Prism intro
+  { cols: 8, rows: 8, pieces: [
+    { type: 'source', x: 0, y: 4, angle: 0, fixed: true },
+    { type: 'prism', x: 4, y: 4, angle: 0, fixed: false },
+    { type: 'target', x: 7, y: 2, angle: 0, fixed: true },
+    { type: 'target', x: 7, y: 4, angle: 0, fixed: true },
+    { type: 'target', x: 7, y: 6, angle: 0, fixed: true },
+  ]},
+  // Level 6: Wall obstacle
+  { cols: 9, rows: 7, pieces: [
+    { type: 'source', x: 0, y: 3, angle: 0, fixed: true },
+    { type: 'wall', x: 3, y: 2, angle: 0, fixed: true },
+    { type: 'wall', x: 3, y: 3, angle: 0, fixed: true },
+    { type: 'wall', x: 3, y: 4, angle: 0, fixed: true },
+    { type: 'mirror', x: 2, y: 1, angle: 0, fixed: false },
+    { type: 'mirror', x: 5, y: 1, angle: 0, fixed: false },
+    { type: 'target', x: 8, y: 3, angle: 0, fixed: true },
+  ]},
+  // Level 7: Two sources
+  { cols: 9, rows: 9, pieces: [
+    { type: 'source', x: 0, y: 2, angle: 0, fixed: true },
+    { type: 'source', x: 0, y: 6, angle: 0, fixed: true },
+    { type: 'mirror', x: 4, y: 2, angle: 45, fixed: false },
+    { type: 'mirror', x: 4, y: 6, angle: 135, fixed: false },
+    { type: 'splitter', x: 4, y: 4, angle: 45, fixed: false },
+    { type: 'target', x: 8, y: 4, angle: 0, fixed: true },
+    { type: 'target', x: 4, y: 0, angle: 0, fixed: true },
+    { type: 'target', x: 4, y: 8, angle: 0, fixed: true },
+  ]},
+  // Level 8: Complex splitter chain
+  { cols: 9, rows: 9, pieces: [
+    { type: 'source', x: 4, y: 0, angle: 90, fixed: true },
+    { type: 'splitter', x: 4, y: 3, angle: 45, fixed: false },
+    { type: 'splitter', x: 4, y: 6, angle: 45, fixed: false },
+    { type: 'mirror', x: 1, y: 3, angle: 0, fixed: false },
+    { type: 'mirror', x: 7, y: 6, angle: 0, fixed: false },
+    { type: 'target', x: 1, y: 8, angle: 0, fixed: true },
+    { type: 'target', x: 7, y: 0, angle: 0, fixed: true },
+    { type: 'target', x: 0, y: 3, angle: 0, fixed: true },
+    { type: 'target', x: 8, y: 6, angle: 0, fixed: true },
+  ]},
+  // Level 9: Prism + mirrors
+  { cols: 10, rows: 8, pieces: [
+    { type: 'source', x: 0, y: 4, angle: 0, fixed: true },
+    { type: 'prism', x: 3, y: 4, angle: 0, fixed: false },
+    { type: 'mirror', x: 7, y: 2, angle: 0, fixed: false },
+    { type: 'mirror', x: 7, y: 6, angle: 0, fixed: false },
+    { type: 'target', x: 9, y: 0, angle: 0, fixed: true },
+    { type: 'target', x: 9, y: 4, angle: 0, fixed: true },
+    { type: 'target', x: 9, y: 7, angle: 0, fixed: true },
+  ]},
+  // Level 10: Double prism
+  { cols: 10, rows: 10, pieces: [
+    { type: 'source', x: 0, y: 5, angle: 0, fixed: true },
+    { type: 'prism', x: 3, y: 5, angle: 0, fixed: false },
+    { type: 'prism', x: 7, y: 5, angle: 0, fixed: false },
+    { type: 'mirror', x: 3, y: 1, angle: 0, fixed: false },
+    { type: 'mirror', x: 7, y: 1, angle: 0, fixed: false },
+    { type: 'target', x: 0, y: 1, angle: 0, fixed: true },
+    { type: 'target', x: 9, y: 1, angle: 0, fixed: true },
+    { type: 'target', x: 5, y: 0, angle: 0, fixed: true },
+    { type: 'target', x: 9, y: 5, angle: 0, fixed: true },
+    { type: 'target', x: 9, y: 9, angle: 0, fixed: true },
+  ]},
+  // Level 11: Maze with walls
+  { cols: 10, rows: 10, pieces: [
+    { type: 'source', x: 0, y: 0, angle: 90, fixed: true },
+    { type: 'wall', x: 0, y: 4, angle: 0, fixed: true },
+    { type: 'wall', x: 1, y: 4, angle: 0, fixed: true },
+    { type: 'wall', x: 2, y: 4, angle: 0, fixed: true },
+    { type: 'wall', x: 5, y: 5, angle: 0, fixed: true },
+    { type: 'wall', x: 5, y: 6, angle: 0, fixed: true },
+    { type: 'wall', x: 5, y: 7, angle: 0, fixed: true },
+    { type: 'mirror', x: 0, y: 3, angle: 0, fixed: false },
+    { type: 'mirror', x: 4, y: 3, angle: 0, fixed: false },
+    { type: 'mirror', x: 4, y: 8, angle: 0, fixed: false },
+    { type: 'splitter', x: 8, y: 3, angle: 0, fixed: false },
+    { type: 'target', x: 8, y: 0, angle: 0, fixed: true },
+    { type: 'target', x: 8, y: 8, angle: 0, fixed: true },
+    { type: 'target', x: 0, y: 8, angle: 0, fixed: true },
+  ]},
+  // Level 12: Three sources
+  { cols: 10, rows: 10, pieces: [
+    { type: 'source', x: 0, y: 2, angle: 0, fixed: true },
+    { type: 'source', x: 0, y: 5, angle: 0, fixed: true },
+    { type: 'source', x: 0, y: 8, angle: 0, fixed: true },
+    { type: 'mirror', x: 5, y: 2, angle: 0, fixed: false },
+    { type: 'mirror', x: 5, y: 8, angle: 0, fixed: false },
+    { type: 'splitter', x: 5, y: 5, angle: 0, fixed: false },
+    { type: 'mirror', x: 8, y: 5, angle: 0, fixed: false },
+    { type: 'target', x: 5, y: 0, angle: 0, fixed: true },
+    { type: 'target', x: 9, y: 2, angle: 0, fixed: true },
+    { type: 'target', x: 9, y: 8, angle: 0, fixed: true },
+    { type: 'target', x: 8, y: 0, angle: 0, fixed: true },
+  ]},
+  // Level 13: Full spectrum
+  { cols: 11, rows: 9, pieces: [
+    { type: 'source', x: 0, y: 4, angle: 0, fixed: true },
+    { type: 'prism', x: 3, y: 4, angle: 0, fixed: false },
+    { type: 'mirror', x: 7, y: 1, angle: 0, fixed: false },
+    { type: 'mirror', x: 7, y: 7, angle: 0, fixed: false },
+    { type: 'splitter', x: 7, y: 4, angle: 0, fixed: false },
+    { type: 'mirror', x: 10, y: 4, angle: 0, fixed: false },
+    { type: 'target', x: 10, y: 1, angle: 0, fixed: true },
+    { type: 'target', x: 10, y: 7, angle: 0, fixed: true },
+    { type: 'target', x: 7, y: 0, angle: 0, fixed: true },
+    { type: 'target', x: 7, y: 8, angle: 0, fixed: true },
+    { type: 'target', x: 10, y: 0, angle: 0, fixed: true },
+  ]},
+  // Level 14: The gauntlet
+  { cols: 11, rows: 11, pieces: [
+    { type: 'source', x: 5, y: 0, angle: 90, fixed: true },
+    { type: 'source', x: 0, y: 5, angle: 0, fixed: true },
+    { type: 'prism', x: 5, y: 5, angle: 0, fixed: false },
+    { type: 'splitter', x: 3, y: 3, angle: 0, fixed: false },
+    { type: 'splitter', x: 7, y: 7, angle: 0, fixed: false },
+    { type: 'mirror', x: 3, y: 7, angle: 0, fixed: false },
+    { type: 'mirror', x: 7, y: 3, angle: 0, fixed: false },
+    { type: 'mirror', x: 9, y: 3, angle: 0, fixed: false },
+    { type: 'mirror', x: 3, y: 9, angle: 0, fixed: false },
+    { type: 'wall', x: 5, y: 3, angle: 0, fixed: true },
+    { type: 'wall', x: 5, y: 7, angle: 0, fixed: true },
+    { type: 'target', x: 10, y: 3, angle: 0, fixed: true },
+    { type: 'target', x: 10, y: 7, angle: 0, fixed: true },
+    { type: 'target', x: 0, y: 10, angle: 0, fixed: true },
+    { type: 'target', x: 10, y: 10, angle: 0, fixed: true },
+    { type: 'target', x: 3, y: 0, angle: 0, fixed: true },
+  ]},
+  // Level 15: Grand finale
+  { cols: 12, rows: 12, pieces: [
+    { type: 'source', x: 0, y: 6, angle: 0, fixed: true },
+    { type: 'source', x: 6, y: 0, angle: 90, fixed: true },
+    { type: 'source', x: 11, y: 6, angle: 180, fixed: true },
+    { type: 'prism', x: 4, y: 6, angle: 0, fixed: false },
+    { type: 'prism', x: 8, y: 6, angle: 0, fixed: false },
+    { type: 'splitter', x: 6, y: 4, angle: 0, fixed: false },
+    { type: 'splitter', x: 6, y: 8, angle: 0, fixed: false },
+    { type: 'mirror', x: 2, y: 2, angle: 0, fixed: false },
+    { type: 'mirror', x: 10, y: 2, angle: 0, fixed: false },
+    { type: 'mirror', x: 2, y: 10, angle: 0, fixed: false },
+    { type: 'mirror', x: 10, y: 10, angle: 0, fixed: false },
+    { type: 'wall', x: 6, y: 6, angle: 0, fixed: true },
+    { type: 'target', x: 0, y: 0, angle: 0, fixed: true },
+    { type: 'target', x: 11, y: 0, angle: 0, fixed: true },
+    { type: 'target', x: 0, y: 11, angle: 0, fixed: true },
+    { type: 'target', x: 11, y: 11, angle: 0, fixed: true },
+    { type: 'target', x: 6, y: 11, angle: 0, fixed: true },
+    { type: 'target', x: 6, y: 2, angle: 0, fixed: true },
+  ]},
+];
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function loadLevel(idx) {
+  const lvl = LEVELS[idx];
+  COLS = lvl.cols; ROWS = lvl.rows;
+  CELL = Math.min((W - 80) / COLS, (H - 120) / ROWS);
+  OX = (W - COLS * CELL) / 2;
+  OY = (H - ROWS * CELL) / 2 + 20;
+  
+  grid = [];
+  for (let piece of lvl.pieces) {
+    grid.push({ ...piece, lit: false, hue: 0 });
+  }
+  selectedPiece = null;
+  beamPaths = [];
+  particles = [];
+  
+  document.getElementById('level-num').textContent = idx + 1;
+  document.getElementById('level-total').textContent = LEVELS.length;
+  updateTargetCount();
+  traceAllBeams();
+}
+
+function updateTargetCount() {
+  const targets = grid.filter(p => p.type === 'target');
+  const lit = targets.filter(p => p.lit);
+  document.getElementById('lit-count').textContent = lit.length;
+  document.getElementById('target-count').textContent = targets.length;
+}
+
+function startGame() {
+  currentLevel = 0;
+  state = 'playing';
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('hud').style.display = 'flex';
+  document.getElementById('tooltip').style.display = 'block';
+  document.getElementById('win-screen').style.display = 'none';
+  loadLevel(0);
+}
+
+function nextLevel() {
+  currentLevel++;
+  if (currentLevel >= LEVELS.length) {
+    state = 'allDone';
+    document.getElementById('win-screen').querySelector('h2').textContent = '🏆 Master Weaver!';
+    document.getElementById('win-msg').textContent = 'You completed all 15 levels!';
+    document.getElementById('win-screen').querySelectorAll('button')[0].textContent = 'Play Again';
+    document.getElementById('win-screen').querySelectorAll('button')[0].onclick = () => { currentLevel = 0; startGame(); };
+    return;
+  }
+  state = 'playing';
+  document.getElementById('win-screen').style.display = 'none';
+  loadLevel(currentLevel);
+}
+
+function restartLevel() {
+  state = 'playing';
+  document.getElementById('win-screen').style.display = 'none';
+  loadLevel(currentLevel);
+}
+
+function gridToScreen(gx, gy) {
+  return { x: OX + (gx + 0.5) * CELL, y: OY + (gy + 0.5) * CELL };
+}
+
+function screenToGrid(sx, sy) {
+  return { x: Math.floor((sx - OX) / CELL), y: Math.floor((sy - OY) / CELL) };
+}
+
+function getPieceAt(gx, gy) {
+  return grid.find(p => p.x === gx && p.y === gy);
+}
+
+// Direction vectors: 0=right, 45=down-right, 90=down, 135=down-left, 180=left, 225=up-left, 270=up, 315=up-right
+function dirToVec(dir) {
+  const r = dir * Math.PI / 180;
+  return { dx: Math.round(Math.cos(r)), dy: Math.round(Math.sin(r)) };
+}
+
+function vecToDir(dx, dy) {
+  return ((Math.atan2(dy, dx) * 180 / Math.PI) + 360) % 360;
+}
+
+function reflectBeam(inDir, mirrorAngle) {
+  // Mirror at angle reflects beam
+  // Mirror angle is the angle of the mirror surface from horizontal
+  const n = mirrorAngle; // normal is perpendicular to surface
+  const inRad = inDir * Math.PI / 180;
+  const nRad = n * Math.PI / 180;
+  
+  // Reflect: outAngle = 2*mirrorAngle - inAngle
+  let outDir = (2 * n - inDir + 360) % 360;
+  // Snap to 45-degree increments
+  outDir = Math.round(outDir / 45) * 45 % 360;
+  return outDir;
+}
+
+function traceAllBeams() {
+  beamPaths = [];
+  // Reset all targets
+  grid.forEach(p => { if (p.type === 'target') p.lit = false; });
+  
+  const sources = grid.filter(p => p.type === 'source');
+  let beamId = 0;
+  
+  for (const src of sources) {
+    traceBeam(src.x, src.y, src.angle, 0, beamId++, 0);
+  }
+  
+  updateTargetCount();
+  checkWin();
+}
+
+function traceBeam(startX, startY, dir, hue, beamId, depth) {
+  if (depth > 30) return; // prevent infinite loops
+  
+  const { dx, dy } = dirToVec(dir);
+  let cx = startX + dx;
+  let cy = startY + dy;
+  const path = [{ x: startX, y: startY }];
+  
+  while (cx >= 0 && cx < COLS && cy >= 0 && cy < ROWS) {
+    path.push({ x: cx, y: cy });
+    const piece = getPieceAt(cx, cy);
+    
+    if (piece) {
+      if (piece.type === 'wall') {
+        break;
+      }
+      if (piece.type === 'target') {
+        piece.lit = true;
+        piece.hue = hue;
+        // Spawn celebration particles
+        const pos = gridToScreen(cx, cy);
+        for (let i = 0; i < 5; i++) {
+          particles.push({
+            x: pos.x, y: pos.y,
+            vx: (Math.random() - 0.5) * 3,
+            vy: (Math.random() - 0.5) * 3,
+            life: 1, decay: 0.015,
+            hue: hue, size: 3 + Math.random() * 3
+          });
+        }
+        break;
+      }
+      if (piece.type === 'mirror') {
+        const outDir = reflectBeam(dir, piece.angle);
+        beamPaths.push({ points: path, hue, beamId });
+        traceBeam(cx, cy, outDir, hue, beamId, depth + 1);
+        return;
+      }
+      if (piece.type === 'splitter') {
+        // Pass through + reflect
+        const outDir = reflectBeam(dir, piece.angle);
+        beamPaths.push({ points: path, hue, beamId });
+        // Reflected beam
+        traceBeam(cx, cy, outDir, hue + 40, beamId + 100, depth + 1);
+        // Pass-through beam continues
+        traceBeam(cx, cy, dir, hue, beamId, depth + 1);
+        return;
+      }
+      if (piece.type === 'prism') {
+        beamPaths.push({ points: path, hue, beamId });
+        // Split into 3 beams at different angles
+        const spread = [dir - 30, dir, dir + 30];
+        spread.forEach((d, i) => {
+          const nd = ((d % 360) + 360) % 360;
+          const snapped = Math.round(nd / 45) * 45 % 360;
+          traceBeam(cx, cy, snapped, hue + i * 80, beamId + i * 200, depth + 1);
+        });
+        return;
+      }
+    }
+    
+    cx += dx;
+    cy += dy;
+  }
+  
+  // Add final off-screen point
+  path.push({ x: cx, y: cy });
+  beamPaths.push({ points: path, hue, beamId });
+}
+
+function checkWin() {
+  if (state !== 'playing') return;
+  const targets = grid.filter(p => p.type === 'target');
+  if (targets.length > 0 && targets.every(t => t.lit)) {
+    state = 'won';
+    winTime = Date.now();
+    setTimeout(() => {
+      document.getElementById('win-screen').style.display = 'block';
+      if (currentLevel >= LEVELS.length - 1) {
+        document.getElementById('win-screen').querySelector('h2').textContent = '🏆 Master Weaver!';
+        document.getElementById('win-msg').textContent = 'You completed all 15 levels!';
+        document.getElementById('win-screen').querySelectorAll('button')[0].textContent = 'Play Again';
+        document.getElementById('win-screen').querySelectorAll('button')[0].onclick = () => { currentLevel = 0; startGame(); };
+      }
+    }, 1200);
+    // Burst of celebration particles
+    for (let i = 0; i < 80; i++) {
+      const cx = W / 2 + (Math.random() - 0.5) * 300;
+      const cy = H / 2 + (Math.random() - 0.5) * 200;
+      particles.push({
+        x: cx, y: cy,
+        vx: (Math.random() - 0.5) * 8,
+        vy: (Math.random() - 0.5) * 8 - 2,
+        life: 1, decay: 0.008 + Math.random() * 0.008,
+        hue: Math.random() * 360, size: 3 + Math.random() * 5
+      });
+    }
+  }
+}
+
+// Input handling
+let isDragging = false;
+let dragStartAngle = 0;
+let dragPiece = null;
+
+canvas.addEventListener('mousedown', (e) => {
+  if (state !== 'playing') return;
+  const g = screenToGrid(e.clientX, e.clientY);
+  const piece = getPieceAt(g.x, g.y);
+  
+  if (piece && !piece.fixed && (piece.type === 'mirror' || piece.type === 'splitter' || piece.type === 'prism')) {
+    selectedPiece = piece;
+    isDragging = true;
+    const pos = gridToScreen(piece.x, piece.y);
+    dragStartAngle = Math.atan2(e.clientY - pos.y, e.clientX - pos.x);
+  }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!isDragging || !selectedPiece) return;
+  const pos = gridToScreen(selectedPiece.x, selectedPiece.y);
+  const currentAngle = Math.atan2(e.clientY - pos.y, e.clientX - pos.x);
+  const delta = (currentAngle - dragStartAngle) * 180 / Math.PI;
+  
+  // Snap to 45 degrees
+  const snapped = Math.round((selectedPiece.angle + delta) / 45) * 45;
+  const newAngle = ((snapped % 360) + 360) % 360;
+  
+  if (newAngle !== selectedPiece.angle) {
+    selectedPiece.angle = newAngle;
+    dragStartAngle = currentAngle;
+    traceAllBeams();
+  }
+});
+
+canvas.addEventListener('mouseup', () => {
+  isDragging = false;
+});
+
+// Right-click to quickly rotate 45 degrees
+canvas.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (state !== 'playing') return;
+  const g = screenToGrid(e.clientX, e.clientY);
+  const piece = getPieceAt(g.x, g.y);
+  if (piece && !piece.fixed && (piece.type === 'mirror' || piece.type === 'splitter' || piece.type === 'prism')) {
+    piece.angle = (piece.angle + 45) % 360;
+    traceAllBeams();
+  }
+});
+
+// Touch support
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (state !== 'playing') return;
+  const t = e.touches[0];
+  const g = screenToGrid(t.clientX, t.clientY);
+  const piece = getPieceAt(g.x, g.y);
+  
+  if (piece && !piece.fixed && (piece.type === 'mirror' || piece.type === 'splitter' || piece.type === 'prism')) {
+    selectedPiece = piece;
+    isDragging = true;
+    const pos = gridToScreen(piece.x, piece.y);
+    dragStartAngle = Math.atan2(t.clientY - pos.y, t.clientX - pos.x);
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (!isDragging || !selectedPiece) return;
+  const t = e.touches[0];
+  const pos = gridToScreen(selectedPiece.x, selectedPiece.y);
+  const currentAngle = Math.atan2(t.clientY - pos.y, t.clientX - pos.x);
+  const delta = (currentAngle - dragStartAngle) * 180 / Math.PI;
+  const snapped = Math.round((selectedPiece.angle + delta) / 45) * 45;
+  const newAngle = ((snapped % 360) + 360) % 360;
+  if (newAngle !== selectedPiece.angle) {
+    selectedPiece.angle = newAngle;
+    dragStartAngle = currentAngle;
+    traceAllBeams();
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', () => { isDragging = false; });
+
+// Double tap to rotate on mobile
+let lastTap = 0;
+canvas.addEventListener('touchend', (e) => {
+  const now = Date.now();
+  if (now - lastTap < 300) {
+    const t = e.changedTouches[0];
+    const g = screenToGrid(t.clientX, t.clientY);
+    const piece = getPieceAt(g.x, g.y);
+    if (piece && !piece.fixed && (piece.type === 'mirror' || piece.type === 'splitter' || piece.type === 'prism')) {
+      piece.angle = (piece.angle + 45) % 360;
+      traceAllBeams();
+    }
+  }
+  lastTap = now;
+});
+
+// Drawing
+function drawGrid() {
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= COLS; x++) {
+    ctx.beginPath();
+    ctx.moveTo(OX + x * CELL, OY);
+    ctx.lineTo(OX + x * CELL, OY + ROWS * CELL);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= ROWS; y++) {
+    ctx.beginPath();
+    ctx.moveTo(OX, OY + y * CELL);
+    ctx.lineTo(OX + COLS * CELL, OY + y * CELL);
+    ctx.stroke();
+  }
+}
+
+function drawPiece(piece) {
+  const pos = gridToScreen(piece.x, piece.y);
+  const r = CELL * 0.35;
+  
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  
+  if (piece.type === 'source') {
+    // Glowing circle with beam direction indicator
+    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 1.5);
+    grad.addColorStop(0, 'rgba(255, 255, 100, 0.8)');
+    grad.addColorStop(0.5, 'rgba(255, 200, 50, 0.3)');
+    grad.addColorStop(1, 'rgba(255, 200, 50, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.fillStyle = '#ffd93d';
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Direction arrow
+    const aRad = piece.angle * Math.PI / 180;
+    ctx.strokeStyle = '#ffd93d';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(aRad) * r * 0.3, Math.sin(aRad) * r * 0.3);
+    ctx.lineTo(Math.cos(aRad) * r, Math.sin(aRad) * r);
+    ctx.stroke();
+  }
+  
+  if (piece.type === 'mirror') {
+    const selected = piece === selectedPiece;
+    const aRad = piece.angle * Math.PI / 180;
+    
+    // Mirror line
+    ctx.strokeStyle = selected ? '#7df9ff' : 'rgba(150, 200, 255, 0.8)';
+    ctx.lineWidth = selected ? 4 : 3;
+    ctx.shadowColor = selected ? '#7df9ff' : 'rgba(150, 200, 255, 0.5)';
+    ctx.shadowBlur = selected ? 15 : 8;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(aRad) * r * 0.9, Math.sin(aRad) * r * 0.9);
+    ctx.lineTo(-Math.cos(aRad) * r * 0.9, -Math.sin(aRad) * r * 0.9);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    
+    // Reflective side indicator (small perpendicular tick)
+    const perpRad = aRad + Math.PI / 2;
+    ctx.strokeStyle = 'rgba(150, 200, 255, 0.3)';
+    ctx.lineWidth = 2;
+    for (let i = -2; i <= 2; i++) {
+      const ox = Math.cos(aRad) * i * r * 0.3;
+      const oy = Math.sin(aRad) * i * r * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ox + Math.cos(perpRad) * r * 0.2, oy + Math.sin(perpRad) * r * 0.2);
+      ctx.stroke();
+    }
+  }
+  
+  if (piece.type === 'splitter') {
+    const selected = piece === selectedPiece;
+    const aRad = piece.angle * Math.PI / 180;
+    
+    // Semi-transparent mirror (splitter)
+    ctx.strokeStyle = selected ? '#c56bff' : 'rgba(200, 150, 255, 0.7)';
+    ctx.lineWidth = selected ? 4 : 3;
+    ctx.shadowColor = selected ? '#c56bff' : 'rgba(200, 150, 255, 0.4)';
+    ctx.shadowBlur = selected ? 15 : 8;
+    ctx.setLineDash([r * 0.15, r * 0.1]);
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(aRad) * r * 0.9, Math.sin(aRad) * r * 0.9);
+    ctx.lineTo(-Math.cos(aRad) * r * 0.9, -Math.sin(aRad) * r * 0.9);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+    
+    // Small diamond in center
+    ctx.fillStyle = selected ? '#c56bff' : 'rgba(200, 150, 255, 0.6)';
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.15);
+    ctx.lineTo(r * 0.15, 0);
+    ctx.lineTo(0, r * 0.15);
+    ctx.lineTo(-r * 0.15, 0);
+    ctx.closePath();
+    ctx.fill();
+  }
+  
+  if (piece.type === 'prism') {
+    const selected = piece === selectedPiece;
+    ctx.save();
+    ctx.rotate(piece.angle * Math.PI / 180);
+    
+    // Triangle prism
+    const grad = ctx.createLinearGradient(-r, 0, r, 0);
+    grad.addColorStop(0, 'rgba(255, 100, 100, 0.3)');
+    grad.addColorStop(0.33, 'rgba(255, 255, 100, 0.3)');
+    grad.addColorStop(0.66, 'rgba(100, 255, 100, 0.3)');
+    grad.addColorStop(1, 'rgba(100, 100, 255, 0.3)');
+    
+    ctx.fillStyle = grad;
+    ctx.strokeStyle = selected ? '#fff' : 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = selected ? 3 : 2;
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.3)';
+    ctx.shadowBlur = selected ? 15 : 8;
+    
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.lineTo(r * 0.87, r * 0.5);
+    ctx.lineTo(-r * 0.87, r * 0.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+  
+  if (piece.type === 'target') {
+    const lit = piece.lit;
+    const pulse = Math.sin(animFrame * 0.05) * 0.2 + 0.8;
+    
+    if (lit) {
+      // Glowing lit target
+      const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 1.8);
+      const color = hslToHex(piece.hue, 80, 60);
+      grad.addColorStop(0, color);
+      grad.addColorStop(0.5, color.replace(')', ', 0.3)').replace('rgb', 'rgba'));
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    // Target rings
+    ctx.strokeStyle = lit ? hslToHex(piece.hue, 80, 70) : 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.8 * (lit ? pulse : 1), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.5 * (lit ? pulse : 1), 0, Math.PI * 2);
+    ctx.stroke();
+    
+    // Center dot
+    ctx.fillStyle = lit ? hslToHex(piece.hue, 80, 70) : 'rgba(255, 255, 255, 0.15)';
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  if (piece.type === 'wall') {
+    ctx.fillStyle = 'rgba(80, 80, 100, 0.8)';
+    ctx.fillRect(-CELL * 0.4, -CELL * 0.4, CELL * 0.8, CELL * 0.8);
+    ctx.strokeStyle = 'rgba(120, 120, 150, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-CELL * 0.4, -CELL * 0.4, CELL * 0.8, CELL * 0.8);
+  }
+  
+  ctx.restore();
+}
+
+function drawBeams() {
+  for (const beam of beamPaths) {
+    if (beam.points.length < 2) continue;
+    
+    const hue = beam.hue;
+    const color = hslToHex(hue % 360, 90, 55);
+    const glow = hslToHex(hue % 360, 90, 65);
+    
+    // Glow layer
+    ctx.strokeStyle = glow;
+    ctx.lineWidth = 6;
+    ctx.globalAlpha = 0.15;
+    ctx.beginPath();
+    for (let i = 0; i < beam.points.length; i++) {
+      const p = gridToScreen(beam.points[i].x, beam.points[i].y);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    
+    // Main beam
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    for (let i = 0; i < beam.points.length; i++) {
+      const p = gridToScreen(beam.points[i].x, beam.points[i].y);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    
+    // Animated dots along beam
+    const speed = 0.003;
+    const t = (animFrame * speed + beam.beamId * 0.1) % 1;
+    for (let dot = 0; dot < 3; dot++) {
+      const dt = (t + dot * 0.33) % 1;
+      const totalLen = beam.points.length - 1;
+      const seg = Math.floor(dt * totalLen);
+      const frac = (dt * totalLen) - seg;
+      if (seg < totalLen) {
+        const p1 = gridToScreen(beam.points[seg].x, beam.points[seg].y);
+        const p2 = gridToScreen(beam.points[seg + 1].x, beam.points[seg + 1].y);
+        const dx = p1.x + (p2.x - p1.x) * frac;
+        const dy = p1.y + (p2.y - p1.y) * frac;
+        ctx.fillStyle = '#fff';
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.arc(dx, dy, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+}
+
+function drawParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.02; // slight gravity
+    p.life -= p.decay;
+    
+    if (p.life <= 0) {
+      particles.splice(i, 1);
+      continue;
+    }
+    
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = hslToHex(p.hue, 80, 60);
+    ctx.shadowColor = hslToHex(p.hue, 80, 60);
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
+function drawBackground() {
+  // Subtle animated gradient background
+  const t = animFrame * 0.001;
+  const grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W, H) * 0.7);
+  grad.addColorStop(0, `hsl(${(t * 20) % 360}, 15%, 8%)`);
+  grad.addColorStop(1, '#0a0a1a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  
+  // Subtle star field
+  if (!drawBackground.stars) {
+    drawBackground.stars = [];
+    for (let i = 0; i < 60; i++) {
+      drawBackground.stars.push({
+        x: Math.random() * 2000, y: Math.random() * 2000,
+        s: Math.random() * 1.5 + 0.5, b: Math.random()
+      });
+    }
+  }
+  for (const star of drawBackground.stars) {
+    const b = (Math.sin(animFrame * 0.02 + star.b * 10) * 0.3 + 0.7) * 0.15;
+    ctx.fillStyle = `rgba(255, 255, 255, ${b})`;
+    ctx.beginPath();
+    ctx.arc(star.x % W, star.y % H, star.s, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function draw() {
+  animFrame++;
+  drawBackground();
+  
+  if (state === 'menu') {
+    requestAnimationFrame(draw);
+    return;
+  }
+  
+  drawGrid();
+  drawBeams();
+  
+  for (const piece of grid) {
+    drawPiece(piece);
+  }
+  
+  drawParticles();
+  
+  // Win flash effect
+  if (state === 'won' && Date.now() - winTime < 600) {
+    const flash = 1 - (Date.now() - winTime) / 600;
+    ctx.fillStyle = `rgba(255, 255, 255, ${flash * 0.15})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+  
+  requestAnimationFrame(draw);
+}
+
+draw();
+</script>
+</body>
+</html>
