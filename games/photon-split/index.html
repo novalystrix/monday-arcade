@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Photon Split — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #030308;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.back-link {
+  position: fixed; top: 12px; left: 16px;
+  color: #4040aa; text-decoration: none; font-size: 13px;
+  z-index: 100; transition: color 0.2s;
+}
+.back-link:hover { color: #ffab40; }
+.hud {
+  display: flex; justify-content: space-between; align-items: center;
+  width: 100%; max-width: 500px;
+  padding: 40px 12px 8px;
+  font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.hud-level { color: #ffab40; }
+.hud-pieces { color: #69f0ae; }
+.hud-score { color: #ea80fc; }
+canvas {
+  border: 1px solid #1a1a30;
+  box-shadow: 0 0 60px rgba(255,171,64,0.08), 0 0 120px rgba(234,128,252,0.04);
+  border-radius: 6px; touch-action: none; cursor: pointer;
+}
+.overlay {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(3,3,8,0.94); z-index: 50; gap: 14px;
+}
+.overlay.hidden { display: none; }
+.overlay h1 {
+  font-size: 2rem; letter-spacing: 0.15em;
+  background: linear-gradient(135deg, #ffab40, #ea80fc, #69f0ae);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  text-transform: uppercase;
+}
+.overlay h2 { font-size: 1rem; color: #888; letter-spacing: 0.1em; }
+.overlay .subtitle {
+  font-size: 0.7rem; color: #556; letter-spacing: 0.08em;
+  max-width: 340px; text-align: center; line-height: 1.6;
+}
+.overlay .btn {
+  margin-top: 12px; padding: 10px 32px;
+  background: linear-gradient(135deg, #ff6d00, #aa00ff);
+  border: none; border-radius: 24px; color: #fff;
+  font-family: inherit; font-size: 0.8rem;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  cursor: pointer; transition: transform 0.15s, box-shadow 0.2s;
+}
+.overlay .btn:hover {
+  transform: scale(1.05); box-shadow: 0 0 30px rgba(255,109,0,0.4);
+}
+.overlay .score-final {
+  font-size: 1.5rem; color: #69f0ae; letter-spacing: 0.1em;
+}
+.instructions {
+  position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+  font-size: 0.6rem; color: #335; letter-spacing: 0.08em;
+  text-align: center; z-index: 10;
+}
+.piece-selector {
+  display: flex; gap: 8px; margin-top: 4px; margin-bottom: 4px;
+}
+.piece-btn {
+  padding: 6px 14px; border: 1px solid #333; border-radius: 12px;
+  background: rgba(255,255,255,0.04); color: #aaa;
+  font-family: inherit; font-size: 0.7rem; cursor: pointer;
+  letter-spacing: 0.08em; transition: all 0.15s;
+}
+.piece-btn.active {
+  border-color: #ffab40; color: #ffab40;
+  background: rgba(255,171,64,0.1);
+}
+.piece-btn:hover { border-color: #666; }
+</style>
+</head>
+<body>
+
+<a href="/" class="back-link">← ARCADE</a>
+
+<div class="hud">
+  <span class="hud-level" id="hudLevel">LEVEL 1</span>
+  <span class="hud-pieces" id="hudPieces">MIRRORS: 3</span>
+  <span class="hud-score" id="hudScore">SCORE: 0</span>
+</div>
+
+<div class="piece-selector" id="pieceSelector" style="display:none;">
+  <button class="piece-btn active" data-type="mirror" id="btnMirror">◇ Mirror</button>
+  <button class="piece-btn" data-type="splitter" id="btnSplitter">◈ Splitter</button>
+</div>
+
+<canvas id="game"></canvas>
+
+<div class="overlay" id="startOverlay">
+  <h1>🔬 Photon Split</h1>
+  <h2>Bend Light. Hit Every Target.</h2>
+  <p class="subtitle">Place mirrors to reflect and splitters to divide laser beams. Illuminate all targets to advance. Right-click or long-press to rotate pieces.</p>
+  <button class="btn" id="startBtn">BEGIN</button>
+</div>
+
+<div class="overlay hidden" id="winOverlay">
+  <h1>💎 Brilliant</h1>
+  <p class="score-final" id="winScore"></p>
+  <p class="subtitle" id="winDetail"></p>
+  <button class="btn" id="nextBtn">NEXT LEVEL</button>
+</div>
+
+<div class="overlay hidden" id="allDoneOverlay">
+  <h1>🏆 Light Master</h1>
+  <p class="score-final" id="finalScore"></p>
+  <p class="subtitle">Every photon found its home. Pure brilliance.</p>
+  <button class="btn" id="replayBtn">PLAY AGAIN</button>
+</div>
+
+<p class="instructions" id="instr">CLICK TO PLACE · RIGHT-CLICK / LONG-PRESS TO ROTATE · TAP PIECE TYPE TO SWITCH</p>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const SIZE = Math.min(480, window.innerWidth - 24, window.innerHeight - 140);
+canvas.width = SIZE;
+canvas.height = SIZE;
+const GRID = 12;
+const CELL = SIZE / GRID;
+
+let level = 0, score = 0, state = 'menu';
+let placedPieces = [];
+let selectedType = 'mirror';
+let piecesLeft = { mirror: 0, splitter: 0 };
+let beamPaths = [];
+let targetsHit = new Set();
+
+// Level definitions
+const levels = [
+  {
+    emitters: [{ x: 0, y: 5, dir: 0, hue: 40 }],
+    targets: [{ x: 10, y: 5 }],
+    walls: [],
+    mirrors: 2, splitters: 0
+  },
+  {
+    emitters: [{ x: 0, y: 3, dir: 0, hue: 40 }],
+    targets: [{ x: 10, y: 9 }],
+    walls: [{ x: 5, y: 0, w: 1, h: 8 }],
+    mirrors: 3, splitters: 0
+  },
+  {
+    emitters: [{ x: 6, y: 0, dir: 2, hue: 280 }],
+    targets: [{ x: 2, y: 10 }, { x: 10, y: 10 }],
+    walls: [],
+    mirrors: 1, splitters: 1
+  },
+  {
+    emitters: [{ x: 0, y: 6, dir: 0, hue: 160 }],
+    targets: [{ x: 10, y: 2 }, { x: 10, y: 10 }],
+    walls: [{ x: 5, y: 4, w: 1, h: 5 }],
+    mirrors: 2, splitters: 1
+  },
+  {
+    emitters: [{ x: 0, y: 1, dir: 0, hue: 40 }],
+    targets: [{ x: 11, y: 1 }, { x: 11, y: 6 }, { x: 11, y: 11 }],
+    walls: [],
+    mirrors: 2, splitters: 2
+  },
+  {
+    emitters: [{ x: 6, y: 0, dir: 2, hue: 200 }],
+    targets: [{ x: 1, y: 11 }, { x: 6, y: 11 }, { x: 11, y: 11 }],
+    walls: [{ x: 3, y: 4, w: 1, h: 4 }, { x: 9, y: 4, w: 1, h: 4 }],
+    mirrors: 3, splitters: 2
+  },
+  {
+    emitters: [{ x: 0, y: 6, dir: 0, hue: 320 }, { x: 6, y: 0, dir: 2, hue: 120 }],
+    targets: [{ x: 11, y: 2 }, { x: 11, y: 10 }, { x: 2, y: 11 }],
+    walls: [{ x: 5, y: 5, w: 2, h: 2 }],
+    mirrors: 3, splitters: 1
+  },
+  {
+    emitters: [{ x: 0, y: 3, dir: 0, hue: 40 }],
+    targets: [{ x: 2, y: 10 }, { x: 6, y: 10 }, { x: 10, y: 10 }, { x: 10, y: 2 }],
+    walls: [{ x: 4, y: 2, w: 1, h: 5 }, { x: 8, y: 5, w: 1, h: 5 }],
+    mirrors: 3, splitters: 3
+  },
+];
+
+// Dirs: 0=right, 1=up, 2=down, 3=left
+const DX = [1, 0, 0, -1];
+const DY = [0, -1, 1, 0];
+
+const DIR_NAMES = { 0: 'right', 1: 'up', 2: 'down', 3: 'left' };
+
+// Mirror reflects: piece has an angle (0=/, 1=\)
+function mirrorReflect(dir, angle) {
+  if (angle === 0) { // /
+    return { 0: 1, 1: 0, 2: 3, 3: 2 }[dir];
+  } else { // backslash
+    return { 0: 2, 1: 3, 2: 0, 3: 1 }[dir];
+  }
+}
+
+// Splitter: splits beam into two perpendicular directions
+function splitterDirs(dir) {
+  if (dir === 0 || dir === 3) return [1, 2]; // horizontal → vertical
+  return [0, 3]; // vertical → horizontal
+}
+
+function getLevelData() {
+  return levels[level % levels.length];
+}
+
+function loadLevel() {
+  const lv = getLevelData();
+  placedPieces = [];
+  piecesLeft = { mirror: lv.mirrors, splitters: lv.splitters };
+  piecesLeft.splitter = lv.splitters;
+  selectedType = lv.mirrors > 0 ? 'mirror' : 'splitter';
+  traceAllBeams();
+  updateHUD();
+  updatePieceButtons();
+}
+
+function updateHUD() {
+  document.getElementById('hudLevel').textContent = `LEVEL ${level + 1}`;
+  const m = piecesLeft.mirror || 0;
+  const s = piecesLeft.splitter || 0;
+  document.getElementById('hudPieces').textContent = `M:${m} S:${s}`;
+  document.getElementById('hudScore').textContent = `SCORE: ${score}`;
+}
+
+function updatePieceButtons() {
+  document.getElementById('btnMirror').classList.toggle('active', selectedType === 'mirror');
+  document.getElementById('btnSplitter').classList.toggle('active', selectedType === 'splitter');
+  document.getElementById('btnMirror').textContent = `◇ Mirror (${piecesLeft.mirror})`;
+  document.getElementById('btnSplitter').textContent = `◈ Split (${piecesLeft.splitter})`;
+}
+
+function getPieceAt(gx, gy) {
+  return placedPieces.find(p => p.gx === gx && p.gy === gy);
+}
+
+function isWall(gx, gy) {
+  const lv = getLevelData();
+  for (const w of lv.walls) {
+    if (gx >= w.x && gx < w.x + w.w && gy >= w.y && gy < w.y + w.h) return true;
+  }
+  return false;
+}
+
+function isTarget(gx, gy) {
+  const lv = getLevelData();
+  return lv.targets.find(t => t.x === gx && t.y === gy);
+}
+
+function isEmitter(gx, gy) {
+  const lv = getLevelData();
+  return lv.emitters.find(e => e.x === gx && e.y === gy);
+}
+
+function traceBeam(startX, startY, dir, hue, depth) {
+  if (depth > 200) return;
+  let x = startX, y = startY;
+  const segments = [];
+
+  for (let steps = 0; steps < 100; steps++) {
+    const nx = x + DX[dir];
+    const ny = y + DY[dir];
+
+    // Out of bounds
+    if (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID) {
+      segments.push({ x1: x, y1: y, x2: x + DX[dir] * 0.5, y2: y + DY[dir] * 0.5, hue });
+      break;
+    }
+
+    // Wall
+    if (isWall(nx, ny)) {
+      segments.push({ x1: x, y1: y, x2: (x + nx) / 2, y2: (y + ny) / 2, hue });
+      break;
+    }
+
+    segments.push({ x1: x, y1: y, x2: nx, y2: ny, hue });
+    x = nx;
+    y = ny;
+
+    // Target
+    const tgt = isTarget(x, y);
+    if (tgt) {
+      targetsHit.add(`${x},${y}`);
+    }
+
+    // Piece
+    const piece = getPieceAt(x, y);
+    if (piece) {
+      if (piece.type === 'mirror') {
+        dir = mirrorReflect(dir, piece.angle);
+      } else if (piece.type === 'splitter') {
+        const dirs = splitterDirs(dir);
+        beamPaths.push(...segments);
+        traceBeam(x, y, dirs[0], (hue + 60) % 360, depth + 1);
+        traceBeam(x, y, dirs[1], (hue + 180) % 360, depth + 1);
+        return;
+      }
+    }
+  }
+  beamPaths.push(...segments);
+}
+
+function traceAllBeams() {
+  beamPaths = [];
+  targetsHit = new Set();
+  const lv = getLevelData();
+  for (const em of lv.emitters) {
+    traceBeam(em.x, em.y, em.dir, em.hue, 0);
+  }
+}
+
+function checkWin() {
+  const lv = getLevelData();
+  return lv.targets.every(t => targetsHit.has(`${t.x},${t.y}`));
+}
+
+// Starfield
+const stars = [];
+for (let i = 0; i < 80; i++) {
+  stars.push({ x: Math.random()*SIZE, y: Math.random()*SIZE, r: Math.random()*0.8+0.2, a: Math.random()*0.3+0.08, tw: Math.random()*Math.PI*2 });
+}
+
+function draw(time) {
+  ctx.clearRect(0, 0, SIZE, SIZE);
+
+  // Stars
+  for (const s of stars) {
+    const f = Math.sin(time*0.002+s.tw)*0.12+s.a;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(180,190,220,${f})`; ctx.fill();
+  }
+
+  const lv = getLevelData();
+
+  // Grid (subtle)
+  ctx.strokeStyle = 'rgba(255,255,255,0.02)';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= GRID; i++) {
+    ctx.beginPath(); ctx.moveTo(i*CELL, 0); ctx.lineTo(i*CELL, SIZE); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i*CELL); ctx.lineTo(SIZE, i*CELL); ctx.stroke();
+  }
+
+  // Walls
+  for (const w of lv.walls) {
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(w.x*CELL, w.y*CELL, w.w*CELL, w.h*CELL);
+    ctx.strokeStyle = 'rgba(255,60,60,0.3)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(w.x*CELL, w.y*CELL, w.w*CELL, w.h*CELL);
+  }
+
+  // Targets
+  for (const t of lv.targets) {
+    const cx = (t.x + 0.5) * CELL;
+    const cy = (t.y + 0.5) * CELL;
+    const hit = targetsHit.has(`${t.x},${t.y}`);
+    const pulse = Math.sin(time * 0.004) * 0.2 + 0.8;
+
+    if (hit) {
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, CELL*0.7);
+      g.addColorStop(0, `rgba(105,240,174,${0.5*pulse})`);
+      g.addColorStop(1, 'transparent');
+      ctx.beginPath(); ctx.arc(cx, cy, CELL*0.7, 0, Math.PI*2);
+      ctx.fillStyle = g; ctx.fill();
+    }
+
+    ctx.beginPath(); ctx.arc(cx, cy, CELL*0.3, 0, Math.PI*2);
+    ctx.strokeStyle = hit ? `rgba(105,240,174,${0.8+pulse*0.2})` : `rgba(234,128,252,${0.4+pulse*0.2})`;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = hit ? '#69f0ae' : '#ea80fc';
+    ctx.shadowBlur = hit ? 15 : 8;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Inner dot
+    ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI*2);
+    ctx.fillStyle = hit ? '#69f0ae' : 'rgba(234,128,252,0.5)';
+    ctx.fill();
+  }
+
+  // Emitters
+  for (const em of lv.emitters) {
+    const cx = (em.x + 0.5) * CELL;
+    const cy = (em.y + 0.5) * CELL;
+    const pulse = Math.sin(time * 0.005) * 0.15 + 0.85;
+
+    ctx.beginPath(); ctx.arc(cx, cy, CELL*0.3, 0, Math.PI*2);
+    ctx.fillStyle = `hsla(${em.hue},100%,60%,${0.5*pulse})`;
+    ctx.shadowColor = `hsl(${em.hue},100%,50%)`;
+    ctx.shadowBlur = 15;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Direction arrow
+    const ax = cx + DX[em.dir] * CELL * 0.35;
+    const ay = cy + DY[em.dir] * CELL * 0.35;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ax, ay);
+    ctx.strokeStyle = `hsla(${em.hue},100%,70%,0.5)`;
+    ctx.lineWidth = 2; ctx.stroke();
+  }
+
+  // Beams
+  const beamAlpha = Math.sin(time * 0.003) * 0.1 + 0.75;
+  for (const seg of beamPaths) {
+    const x1 = (seg.x1 + 0.5) * CELL;
+    const y1 = (seg.y1 + 0.5) * CELL;
+    const x2 = (seg.x2 + 0.5) * CELL;
+    const y2 = (seg.y2 + 0.5) * CELL;
+
+    // Glow
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+    ctx.strokeStyle = `hsla(${seg.hue},100%,50%,${beamAlpha * 0.15})`;
+    ctx.lineWidth = 8;
+    ctx.stroke();
+
+    // Core
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+    ctx.strokeStyle = `hsla(${seg.hue},100%,70%,${beamAlpha})`;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = `hsl(${seg.hue},100%,60%)`;
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // Placed pieces
+  for (const p of placedPieces) {
+    const cx = (p.gx + 0.5) * CELL;
+    const cy = (p.gy + 0.5) * CELL;
+
+    if (p.type === 'mirror') {
+      ctx.save();
+      ctx.translate(cx, cy);
+      const half = CELL * 0.35;
+      ctx.beginPath();
+      if (p.angle === 0) { // /
+        ctx.moveTo(-half, half); ctx.lineTo(half, -half);
+      } else { // backslash
+        ctx.moveTo(-half, -half); ctx.lineTo(half, half);
+      }
+      ctx.strokeStyle = 'rgba(255,171,64,0.9)';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = '#ffab40';
+      ctx.shadowBlur = 8;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    } else {
+      // Splitter — diamond shape
+      ctx.save();
+      ctx.translate(cx, cy);
+      const h = CELL * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(0, -h); ctx.lineTo(h, 0); ctx.lineTo(0, h); ctx.lineTo(-h, 0);
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(0,229,255,0.9)';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#00e5ff';
+      ctx.shadowBlur = 10;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(0,229,255,0.1)';
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+function gameLoop(time) {
+  draw(time);
+  requestAnimationFrame(gameLoop);
+}
+
+// Input
+function gridFromPixel(px, py) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (px - rect.left) * (SIZE / rect.width);
+  const y = (py - rect.top) * (SIZE / rect.height);
+  return { gx: Math.floor(x / CELL), gy: Math.floor(y / CELL) };
+}
+
+canvas.addEventListener('click', (e) => {
+  if (state !== 'placing') return;
+  const { gx, gy } = gridFromPixel(e.clientX, e.clientY);
+  handlePlace(gx, gy);
+});
+
+canvas.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (state !== 'placing') return;
+  const { gx, gy } = gridFromPixel(e.clientX, e.clientY);
+  handleRotate(gx, gy);
+});
+
+let longPressTimer = null;
+canvas.addEventListener('touchstart', (e) => {
+  if (state !== 'placing') return;
+  const touch = e.touches[0];
+  const { gx, gy } = gridFromPixel(touch.clientX, touch.clientY);
+  longPressTimer = setTimeout(() => {
+    handleRotate(gx, gy);
+    longPressTimer = null;
+  }, 400);
+}, { passive: true });
+
+canvas.addEventListener('touchend', (e) => {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+    if (state !== 'placing') return;
+    const touch = e.changedTouches[0];
+    const { gx, gy } = gridFromPixel(touch.clientX, touch.clientY);
+    handlePlace(gx, gy);
+  }
+});
+
+function handlePlace(gx, gy) {
+  if (gx < 0 || gx >= GRID || gy < 0 || gy >= GRID) return;
+  if (isWall(gx, gy) || isEmitter(gx, gy) || isTarget(gx, gy)) return;
+
+  const existing = getPieceAt(gx, gy);
+  if (existing) {
+    // Remove piece
+    placedPieces = placedPieces.filter(p => p !== existing);
+    piecesLeft[existing.type]++;
+    traceAllBeams();
+    updateHUD();
+    updatePieceButtons();
+    return;
+  }
+
+  if ((piecesLeft[selectedType] || 0) <= 0) return;
+
+  placedPieces.push({ gx, gy, type: selectedType, angle: 0 });
+  piecesLeft[selectedType]--;
+  traceAllBeams();
+  updateHUD();
+  updatePieceButtons();
+
+  if (checkWin()) {
+    const unusedPieces = (piecesLeft.mirror || 0) + (piecesLeft.splitter || 0);
+    const levelScore = 100 + unusedPieces * 30;
+    score += levelScore;
+    updateHUD();
+
+    setTimeout(() => {
+      if (level >= levels.length - 1) {
+        document.getElementById('finalScore').textContent = `TOTAL: ${score}`;
+        state = 'done';
+        showOverlay('allDoneOverlay');
+      } else {
+        document.getElementById('winScore').textContent = `+${levelScore}`;
+        document.getElementById('winDetail').textContent =
+          `${unusedPieces} pieces saved for bonus`;
+        state = 'win';
+        showOverlay('winOverlay');
+      }
+    }, 500);
+  }
+}
+
+function handleRotate(gx, gy) {
+  const piece = getPieceAt(gx, gy);
+  if (!piece) return;
+  if (piece.type === 'mirror') {
+    piece.angle = piece.angle === 0 ? 1 : 0;
+    traceAllBeams();
+    if (checkWin()) {
+      const unusedPieces = (piecesLeft.mirror || 0) + (piecesLeft.splitter || 0);
+      const levelScore = 100 + unusedPieces * 30;
+      score += levelScore;
+      updateHUD();
+      setTimeout(() => {
+        if (level >= levels.length - 1) {
+          document.getElementById('finalScore').textContent = `TOTAL: ${score}`;
+          state = 'done';
+          showOverlay('allDoneOverlay');
+        } else {
+          document.getElementById('winScore').textContent = `+${levelScore}`;
+          document.getElementById('winDetail').textContent = `${unusedPieces} pieces saved`;
+          state = 'win';
+          showOverlay('winOverlay');
+        }
+      }, 500);
+    }
+  }
+}
+
+// Piece selector buttons
+document.getElementById('btnMirror').addEventListener('click', () => {
+  selectedType = 'mirror';
+  updatePieceButtons();
+});
+document.getElementById('btnSplitter').addEventListener('click', () => {
+  selectedType = 'splitter';
+  updatePieceButtons();
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyM') { selectedType = 'mirror'; updatePieceButtons(); }
+  if (e.code === 'KeyS') { selectedType = 'splitter'; updatePieceButtons(); }
+});
+
+// Overlay buttons
+function showOverlay(id) {
+  ['startOverlay','winOverlay','allDoneOverlay'].forEach(oid => {
+    document.getElementById(oid).classList.toggle('hidden', oid !== id);
+  });
+}
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  level = 0; score = 0;
+  loadLevel();
+  state = 'placing';
+  showOverlay(null);
+  document.getElementById('pieceSelector').style.display = 'flex';
+});
+document.getElementById('nextBtn').addEventListener('click', () => {
+  level++;
+  loadLevel();
+  state = 'placing';
+  showOverlay(null);
+});
+document.getElementById('replayBtn').addEventListener('click', () => {
+  level = 0; score = 0;
+  loadLevel();
+  state = 'placing';
+  showOverlay(null);
+});
+
+loadLevel();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
