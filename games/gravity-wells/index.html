@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Gravity Wells — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #050510;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #4040aa;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+  transition: color 0.2s;
+}
+.back-link:hover { color: #b388ff; }
+
+.hud {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 500px;
+  padding: 40px 12px 8px;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.hud-level { color: #b388ff; }
+.hud-wells { color: #00e5ff; }
+.hud-score { color: #76ff03; }
+
+canvas {
+  border: 1px solid #1a1a3a;
+  box-shadow: 0 0 60px rgba(179,136,255,0.12), 0 0 120px rgba(0,229,255,0.06);
+  border-radius: 6px;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5,5,16,0.92);
+  z-index: 50;
+  gap: 16px;
+}
+.overlay.hidden { display: none; }
+
+.overlay h1 {
+  font-size: 2rem;
+  letter-spacing: 0.15em;
+  background: linear-gradient(135deg, #b388ff, #00e5ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-transform: uppercase;
+}
+.overlay h2 {
+  font-size: 1rem;
+  color: #888;
+  letter-spacing: 0.1em;
+}
+.overlay .subtitle {
+  font-size: 0.7rem;
+  color: #556;
+  letter-spacing: 0.08em;
+  max-width: 320px;
+  text-align: center;
+  line-height: 1.6;
+}
+.overlay .btn {
+  margin-top: 12px;
+  padding: 10px 32px;
+  background: linear-gradient(135deg, #7c4dff, #00b8d4);
+  border: none;
+  border-radius: 24px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.8rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.2s;
+}
+.overlay .btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 30px rgba(124,77,255,0.4);
+}
+.overlay .score-final {
+  font-size: 1.5rem;
+  color: #76ff03;
+  letter-spacing: 0.1em;
+}
+.instructions {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.6rem;
+  color: #335;
+  letter-spacing: 0.08em;
+  text-align: center;
+  z-index: 10;
+}
+</style>
+</head>
+<body>
+
+<a href="/" class="back-link">← ARCADE</a>
+
+<div class="hud">
+  <span class="hud-level" id="hudLevel">LEVEL 1</span>
+  <span class="hud-wells" id="hudWells">WELLS: 3</span>
+  <span class="hud-score" id="hudScore">SCORE: 0</span>
+</div>
+
+<canvas id="game"></canvas>
+
+<div class="overlay" id="startOverlay">
+  <h1>🌀 Gravity Wells</h1>
+  <h2>Bend Space. Guide Light.</h2>
+  <p class="subtitle">Place gravity wells to attract glowing particles toward the target portal. Use as few wells as possible for bonus points.</p>
+  <button class="btn" id="startBtn">LAUNCH</button>
+</div>
+
+<div class="overlay hidden" id="winOverlay">
+  <h1>✨ Level Complete</h1>
+  <p class="score-final" id="winScore"></p>
+  <p class="subtitle" id="winBonus"></p>
+  <button class="btn" id="nextBtn">NEXT LEVEL</button>
+</div>
+
+<div class="overlay hidden" id="failOverlay">
+  <h1>💫 Particles Lost</h1>
+  <p class="subtitle">The particles drifted into the void. Try again!</p>
+  <button class="btn" id="retryBtn">RETRY</button>
+</div>
+
+<div class="overlay hidden" id="allDoneOverlay">
+  <h1>🏆 Cosmos Mastered</h1>
+  <p class="score-final" id="finalScore"></p>
+  <p class="subtitle">You've bent space across all levels. Incredible.</p>
+  <button class="btn" id="replayBtn">PLAY AGAIN</button>
+</div>
+
+<p class="instructions" id="instr">CLICK / TAP TO PLACE GRAVITY WELLS · PRESS SPACE OR TAP LAUNCH TO RELEASE PARTICLES</p>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Responsive sizing
+const SIZE = Math.min(480, window.innerWidth - 24, window.innerHeight - 120);
+canvas.width = SIZE;
+canvas.height = SIZE;
+
+// Game state
+let level = 0;
+let score = 0;
+let wellsRemaining = 0;
+let wells = [];
+let particles = [];
+let trails = [];
+let state = 'menu'; // menu, placing, simulating, win, fail
+let target = { x: 0, y: 0, r: 22 };
+let emitter = { x: 0, y: 0, angle: 0 };
+let obstacles = [];
+let starfield = [];
+let particlesCaptured = 0;
+let particlesLost = 0;
+const PARTICLE_COUNT = 12;
+const GRAVITY_STRENGTH = 2800;
+const WELL_RADIUS = 14;
+const TARGET_GLOW_PHASE = { v: 0 };
+
+// Levels
+const levels = [
+  { emitter: { x: 0.15, y: 0.5, angle: 0 }, target: { x: 0.85, y: 0.5 }, wells: 3, obstacles: [] },
+  { emitter: { x: 0.1, y: 0.85, angle: -0.6 }, target: { x: 0.85, y: 0.15 }, wells: 3, obstacles: [] },
+  { emitter: { x: 0.5, y: 0.1, angle: Math.PI/2 }, target: { x: 0.5, y: 0.9 }, wells: 2,
+    obstacles: [{ x: 0.5, y: 0.5, w: 0.35, h: 0.04 }] },
+  { emitter: { x: 0.1, y: 0.1, angle: 0.5 }, target: { x: 0.9, y: 0.9 }, wells: 3,
+    obstacles: [{ x: 0.5, y: 0.35, w: 0.04, h: 0.3 }, { x: 0.5, y: 0.7, w: 0.3, h: 0.04 }] },
+  { emitter: { x: 0.1, y: 0.5, angle: 0 }, target: { x: 0.9, y: 0.5 }, wells: 2,
+    obstacles: [{ x: 0.5, y: 0.5, w: 0.04, h: 0.6 }] },
+  { emitter: { x: 0.15, y: 0.9, angle: -0.3 }, target: { x: 0.85, y: 0.1 }, wells: 4,
+    obstacles: [{ x: 0.35, y: 0.6, w: 0.3, h: 0.04 }, { x: 0.65, y: 0.35, w: 0.3, h: 0.04 }] },
+  { emitter: { x: 0.5, y: 0.05, angle: Math.PI/2 }, target: { x: 0.5, y: 0.95 }, wells: 3,
+    obstacles: [{ x: 0.3, y: 0.33, w: 0.25, h: 0.04 }, { x: 0.7, y: 0.5, w: 0.25, h: 0.04 }, { x: 0.3, y: 0.67, w: 0.25, h: 0.04 }] },
+  { emitter: { x: 0.05, y: 0.5, angle: 0.1 }, target: { x: 0.95, y: 0.5 }, wells: 2,
+    obstacles: [{ x: 0.33, y: 0.5, w: 0.04, h: 0.5 }, { x: 0.66, y: 0.5, w: 0.04, h: 0.5 }] },
+];
+
+// Generate starfield
+for (let i = 0; i < 120; i++) {
+  starfield.push({
+    x: Math.random() * SIZE,
+    y: Math.random() * SIZE,
+    r: Math.random() * 1.2 + 0.3,
+    a: Math.random() * 0.4 + 0.1,
+    twinkle: Math.random() * Math.PI * 2
+  });
+}
+
+function loadLevel(idx) {
+  const lv = levels[idx % levels.length];
+  emitter = {
+    x: lv.emitter.x * SIZE,
+    y: lv.emitter.y * SIZE,
+    angle: lv.emitter.angle
+  };
+  target = {
+    x: lv.target.x * SIZE,
+    y: lv.target.y * SIZE,
+    r: 22
+  };
+  wellsRemaining = lv.wells;
+  wells = [];
+  particles = [];
+  trails = [];
+  particlesCaptured = 0;
+  particlesLost = 0;
+  obstacles = lv.obstacles.map(o => ({
+    x: o.x * SIZE, y: o.y * SIZE,
+    w: o.w * SIZE, h: o.h * SIZE
+  }));
+  updateHUD();
+}
+
+function updateHUD() {
+  document.getElementById('hudLevel').textContent = `LEVEL ${level + 1}`;
+  document.getElementById('hudWells').textContent = `WELLS: ${wellsRemaining}`;
+  document.getElementById('hudScore').textContent = `SCORE: ${score}`;
+}
+
+function showOverlay(id) {
+  ['startOverlay','winOverlay','failOverlay','allDoneOverlay'].forEach(oid => {
+    document.getElementById(oid).classList.toggle('hidden', oid !== id);
+  });
+}
+
+function spawnParticles() {
+  particles = [];
+  trails = [];
+  particlesCaptured = 0;
+  particlesLost = 0;
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    const spread = (i - PARTICLE_COUNT/2) * 0.08;
+    const speed = 1.5;
+    particles.push({
+      x: emitter.x,
+      y: emitter.y,
+      vx: Math.cos(emitter.angle + spread) * speed,
+      vy: Math.sin(emitter.angle + spread) * speed,
+      alive: true,
+      captured: false,
+      hue: 180 + i * 12
+    });
+    trails.push([]);
+  }
+}
+
+function simulate(dt) {
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    if (!p.alive || p.captured) continue;
+
+    // Gravity from wells
+    for (const w of wells) {
+      const dx = w.x - p.x;
+      const dy = w.y - p.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 5) continue;
+      const force = GRAVITY_STRENGTH / (dist * dist);
+      p.vx += (dx / dist) * force * dt;
+      p.vy += (dy / dist) * force * dt;
+    }
+
+    p.x += p.vx;
+    p.y += p.vy;
+
+    // Trail
+    trails[i].push({ x: p.x, y: p.y, age: 0, hue: p.hue });
+    if (trails[i].length > 60) trails[i].shift();
+
+    // Check target
+    const tdx = p.x - target.x;
+    const tdy = p.y - target.y;
+    if (Math.sqrt(tdx*tdx + tdy*tdy) < target.r + 4) {
+      p.captured = true;
+      p.alive = false;
+      particlesCaptured++;
+    }
+
+    // Check obstacles
+    for (const ob of obstacles) {
+      if (p.x > ob.x - ob.w/2 && p.x < ob.x + ob.w/2 &&
+          p.y > ob.y - ob.h/2 && p.y < ob.y + ob.h/2) {
+        p.alive = false;
+        particlesLost++;
+      }
+    }
+
+    // Out of bounds
+    if (p.x < -30 || p.x > SIZE + 30 || p.y < -30 || p.y > SIZE + 30) {
+      p.alive = false;
+      particlesLost++;
+    }
+  }
+
+  // Age trails
+  for (const trail of trails) {
+    for (const t of trail) t.age += dt;
+  }
+
+  // Check win/fail
+  const allDone = particles.every(p => !p.alive || p.captured);
+  if (allDone) {
+    if (particlesCaptured >= Math.ceil(PARTICLE_COUNT * 0.5)) {
+      // Win!
+      const wellBonus = wellsRemaining * 50;
+      const captureBonus = particlesCaptured * 20;
+      const levelScore = captureBonus + wellBonus;
+      score += levelScore;
+      updateHUD();
+
+      if (level >= levels.length - 1) {
+        document.getElementById('finalScore').textContent = `TOTAL: ${score}`;
+        state = 'win';
+        showOverlay('allDoneOverlay');
+      } else {
+        document.getElementById('winScore').textContent = `+${levelScore} POINTS`;
+        document.getElementById('winBonus').textContent =
+          `${particlesCaptured}/${PARTICLE_COUNT} captured · ${wellsRemaining} wells saved`;
+        state = 'win';
+        showOverlay('winOverlay');
+      }
+    } else {
+      state = 'fail';
+      showOverlay('failOverlay');
+    }
+  }
+}
+
+function drawStarfield(time) {
+  for (const s of starfield) {
+    const flicker = Math.sin(time * 0.002 + s.twinkle) * 0.15 + s.a;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(200,210,255,${flicker})`;
+    ctx.fill();
+  }
+}
+
+function drawTarget(time) {
+  const pulse = Math.sin(time * 0.004) * 0.3 + 0.7;
+  // Outer glow
+  const grad = ctx.createRadialGradient(target.x, target.y, 0, target.x, target.y, target.r * 2.5);
+  grad.addColorStop(0, `rgba(124,77,255,${0.25 * pulse})`);
+  grad.addColorStop(0.5, `rgba(0,229,255,${0.1 * pulse})`);
+  grad.addColorStop(1, 'transparent');
+  ctx.beginPath();
+  ctx.arc(target.x, target.y, target.r * 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Portal ring
+  ctx.beginPath();
+  ctx.arc(target.x, target.y, target.r, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(179,136,255,${0.6 + pulse * 0.4})`;
+  ctx.lineWidth = 2.5;
+  ctx.shadowColor = '#b388ff';
+  ctx.shadowBlur = 15;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Inner swirl
+  for (let i = 0; i < 3; i++) {
+    const a = time * 0.003 + (i * Math.PI * 2 / 3);
+    const r = target.r * 0.6;
+    ctx.beginPath();
+    ctx.arc(target.x + Math.cos(a) * r * 0.4, target.y + Math.sin(a) * r * 0.4, 3, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(0,229,255,${0.4 + pulse * 0.3})`;
+    ctx.fill();
+  }
+}
+
+function drawEmitter(time) {
+  const pulse = Math.sin(time * 0.005) * 0.3 + 0.7;
+  ctx.beginPath();
+  ctx.arc(emitter.x, emitter.y, 8, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(118,255,3,${0.4 + pulse * 0.3})`;
+  ctx.shadowColor = '#76ff03';
+  ctx.shadowBlur = 12;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Direction indicator
+  const dx = Math.cos(emitter.angle) * 18;
+  const dy = Math.sin(emitter.angle) * 18;
+  ctx.beginPath();
+  ctx.moveTo(emitter.x + dx * 0.6, emitter.y + dy * 0.6);
+  ctx.lineTo(emitter.x + dx, emitter.y + dy);
+  ctx.strokeStyle = `rgba(118,255,3,${0.3 + pulse * 0.2})`;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawWells(time) {
+  for (const w of wells) {
+    // Gravity field rings
+    for (let r = 1; r <= 3; r++) {
+      const radius = 12 + r * 14 + Math.sin(time * 0.003 + r) * 3;
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(0,229,255,${0.12 / r})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    // Core
+    const grad = ctx.createRadialGradient(w.x, w.y, 0, w.x, w.y, WELL_RADIUS);
+    grad.addColorStop(0, 'rgba(0,229,255,0.8)');
+    grad.addColorStop(0.6, 'rgba(124,77,255,0.4)');
+    grad.addColorStop(1, 'transparent');
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, WELL_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.shadowColor = '#00e5ff';
+    ctx.shadowBlur = 20;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawObstacles() {
+  for (const ob of obstacles) {
+    const grad = ctx.createLinearGradient(ob.x - ob.w/2, ob.y, ob.x + ob.w/2, ob.y);
+    grad.addColorStop(0, 'rgba(255,23,68,0.15)');
+    grad.addColorStop(0.5, 'rgba(255,23,68,0.6)');
+    grad.addColorStop(1, 'rgba(255,23,68,0.15)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(ob.x - ob.w/2, ob.y - ob.h/2, ob.w, ob.h);
+    ctx.strokeStyle = 'rgba(255,23,68,0.7)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ob.x - ob.w/2, ob.y - ob.h/2, ob.w, ob.h);
+  }
+}
+
+function drawTrails() {
+  for (const trail of trails) {
+    if (trail.length < 2) continue;
+    for (let i = 1; i < trail.length; i++) {
+      const t = trail[i];
+      const prev = trail[i-1];
+      const alpha = Math.max(0, 1 - t.age * 0.7) * (i / trail.length);
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(t.x, t.y);
+      ctx.strokeStyle = `hsla(${t.hue},100%,65%,${alpha * 0.7})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+}
+
+function drawParticles(time) {
+  for (const p of particles) {
+    if (!p.alive) continue;
+    const pulse = Math.sin(time * 0.01 + p.hue) * 0.2 + 0.8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${p.hue},100%,70%,${pulse})`;
+    ctx.shadowColor = `hsl(${p.hue},100%,60%)`;
+    ctx.shadowBlur = 10;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+// Placing preview
+let previewPos = null;
+
+function draw(time) {
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  drawStarfield(time);
+  drawObstacles();
+  drawTarget(time);
+  drawEmitter(time);
+  drawWells(time);
+  drawTrails();
+  drawParticles(time);
+
+  // Preview well
+  if (state === 'placing' && previewPos && wellsRemaining > 0) {
+    ctx.beginPath();
+    ctx.arc(previewPos.x, previewPos.y, WELL_RADIUS, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(0,229,255,0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+let lastTime = 0;
+function gameLoop(time) {
+  const dt = Math.min((time - lastTime) / 16.67, 3);
+  lastTime = time;
+
+  if (state === 'simulating') {
+    simulate(dt);
+  }
+  draw(time);
+  requestAnimationFrame(gameLoop);
+}
+
+// Input
+canvas.addEventListener('click', (e) => {
+  if (state !== 'placing') return;
+  if (wellsRemaining <= 0) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (SIZE / rect.width);
+  const y = (e.clientY - rect.top) * (SIZE / rect.height);
+
+  // Don't place on target or emitter
+  const tdist = Math.sqrt((x - target.x)**2 + (y - target.y)**2);
+  const edist = Math.sqrt((x - emitter.x)**2 + (y - emitter.y)**2);
+  if (tdist < target.r + 20 || edist < 25) return;
+
+  // Don't place on obstacles
+  for (const ob of obstacles) {
+    if (x > ob.x - ob.w/2 - 10 && x < ob.x + ob.w/2 + 10 &&
+        y > ob.y - ob.h/2 - 10 && y < ob.y + ob.h/2 + 10) return;
+  }
+
+  wells.push({ x, y });
+  wellsRemaining--;
+  updateHUD();
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  previewPos = {
+    x: (e.clientX - rect.left) * (SIZE / rect.width),
+    y: (e.clientY - rect.top) * (SIZE / rect.height)
+  };
+});
+
+canvas.addEventListener('touchstart', (e) => {
+  if (state !== 'placing') return;
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  const x = (touch.clientX - rect.left) * (SIZE / rect.width);
+  const y = (touch.clientY - rect.top) * (SIZE / rect.height);
+
+  const tdist = Math.sqrt((x - target.x)**2 + (y - target.y)**2);
+  const edist = Math.sqrt((x - emitter.x)**2 + (y - emitter.y)**2);
+  if (tdist < target.r + 20 || edist < 25) return;
+
+  for (const ob of obstacles) {
+    if (x > ob.x - ob.w/2 - 10 && x < ob.x + ob.w/2 + 10 &&
+        y > ob.y - ob.h/2 - 10 && y < ob.y + ob.h/2 + 10) return;
+  }
+
+  if (wellsRemaining <= 0) return;
+  wells.push({ x, y });
+  wellsRemaining--;
+  updateHUD();
+}, { passive: false });
+
+// Keyboard: space to launch, r to reset wells, u to undo
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && state === 'placing') {
+    e.preventDefault();
+    launchParticles();
+  }
+  if (e.code === 'KeyR' && state === 'placing') {
+    wells = [];
+    wellsRemaining = levels[level % levels.length].wells;
+    updateHUD();
+  }
+  if (e.code === 'KeyU' && state === 'placing' && wells.length > 0) {
+    wells.pop();
+    wellsRemaining++;
+    updateHUD();
+  }
+});
+
+function launchParticles() {
+  state = 'simulating';
+  spawnParticles();
+  document.getElementById('instr').textContent = 'WATCHING PARTICLES...';
+}
+
+// Double-tap to launch on mobile
+let lastTap = 0;
+canvas.addEventListener('touchend', (e) => {
+  const now = Date.now();
+  if (now - lastTap < 300 && state === 'placing') {
+    launchParticles();
+  }
+  lastTap = now;
+});
+
+// Launch button (also add a small launch button on canvas)
+function addLaunchHint() {
+  document.getElementById('instr').textContent =
+    'CLICK TO PLACE WELLS · SPACE / DOUBLE-TAP TO LAUNCH · U=UNDO · R=RESET';
+}
+
+// Buttons
+document.getElementById('startBtn').addEventListener('click', () => {
+  level = 0;
+  score = 0;
+  loadLevel(0);
+  state = 'placing';
+  showOverlay(null);
+  addLaunchHint();
+});
+
+document.getElementById('nextBtn').addEventListener('click', () => {
+  level++;
+  loadLevel(level);
+  state = 'placing';
+  showOverlay(null);
+  addLaunchHint();
+});
+
+document.getElementById('retryBtn').addEventListener('click', () => {
+  loadLevel(level);
+  state = 'placing';
+  showOverlay(null);
+  addLaunchHint();
+});
+
+document.getElementById('replayBtn').addEventListener('click', () => {
+  level = 0;
+  score = 0;
+  loadLevel(0);
+  state = 'placing';
+  showOverlay(null);
+  addLaunchHint();
+});
+
+function showOverlay(id) {
+  ['startOverlay','winOverlay','failOverlay','allDoneOverlay'].forEach(oid => {
+    document.getElementById(oid).classList.toggle('hidden', oid !== id);
+  });
+}
+
+// Init
+loadLevel(0);
+requestAnimationFrame(gameLoop);
+</script>
+
+</body>
+</html>
