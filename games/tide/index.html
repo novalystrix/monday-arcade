@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Tide 🌊</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#030618;overflow:hidden;touch-action:none;font-family:'Segoe UI',system-ui,sans-serif;cursor:none}
+canvas{display:block}
+#cursor{position:fixed;width:24px;height:24px;border-radius:50%;pointer-events:none;z-index:100;mix-blend-mode:screen;background:radial-gradient(circle,rgba(80,220,255,.9),rgba(80,220,255,0));transform:translate(-50%,-50%);transition:width .15s,height .15s}
+#cursor.active{width:40px;height:40px}
+#ui{position:absolute;top:0;left:0;width:100%;pointer-events:none;z-index:10}
+#hud{display:flex;justify-content:space-between;padding:18px 24px;font-size:17px;color:rgba(180,230,255,.85);text-shadow:0 0 12px rgba(80,180,255,.6)}
+#combo{color:#5eead4;font-weight:700;transition:transform .12s}
+#combo.pop{transform:scale(1.4)}
+#overlay{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:auto;z-index:20;background:radial-gradient(ellipse at 50% 80%,rgba(10,30,60,.95),rgba(3,6,24,.98))}
+#overlay.hidden{display:none}
+#overlay h1{font-size:clamp(40px,8vw,64px);color:#fff;text-shadow:0 0 40px rgba(80,200,255,.5),0 0 80px rgba(40,80,200,.3);margin-bottom:4px;letter-spacing:6px;font-weight:300}
+#overlay .emoji{font-size:clamp(48px,10vw,80px);margin-bottom:12px}
+#overlay .sub{font-size:clamp(14px,2.5vw,18px);color:rgba(180,220,255,.5);margin-bottom:32px;text-align:center;max-width:400px;line-height:1.5}
+#overlay .score-display{font-size:28px;color:#5eead4;text-shadow:0 0 20px rgba(94,234,212,.5);margin-bottom:20px}
+#overlay button{background:linear-gradient(135deg,#0d9488,#0891b2);border:none;color:#fff;padding:16px 52px;font-size:18px;border-radius:50px;cursor:pointer;letter-spacing:3px;text-transform:uppercase;box-shadow:0 0 30px rgba(13,148,136,.4);transition:all .2s;pointer-events:auto}
+#overlay button:hover{transform:scale(1.06);box-shadow:0 0 50px rgba(13,148,136,.6)}
+.stats{display:flex;gap:24px;margin-bottom:24px;font-size:14px;color:rgba(180,220,255,.4)}
+#lives{display:flex;gap:6px}
+.life{width:12px;height:12px;border-radius:50%;background:radial-gradient(circle,#5eead4,#0d9488);box-shadow:0 0 8px rgba(94,234,212,.6);transition:all .3s}
+.life.lost{background:rgba(255,255,255,.1);box-shadow:none}
+</style>
+</head>
+<body>
+<div id="cursor"></div>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div id="hud">
+    <span>🌊 <span id="score">0</span></span>
+    <span id="combo"></span>
+    <div id="lives"></div>
+  </div>
+</div>
+<div id="overlay">
+  <div class="emoji">🌊</div>
+  <h1>TIDE</h1>
+  <div class="sub">Ride the bioluminescent waves. Click to swell the ocean and carry glowing orbs to shore.</div>
+  <button id="startBtn">Dive In</button>
+</div>
+
+<script>
+const C=document.getElementById('c'),X=C.getContext('2d');
+const cursor=document.getElementById('cursor');
+const overlay=document.getElementById('overlay');
+const startBtn=document.getElementById('startBtn');
+const scoreEl=document.getElementById('score');
+const comboEl=document.getElementById('combo');
+const livesEl=document.getElementById('lives');
+let W,H,playing=false,score=0,combo=0,maxCombo=0,lives=3,collected=0,missed=0;
+let mouseX=0,mouseY=0,mouseDown=false,lastClick=0;
+let orbs=[],particles=[],ripples=[],mines=[],jellyfish=[];
+let waveTime=0,moonGlow=0,frameCount=0;
+const WAVE_POINTS=120;
+let waveHeights=new Float32Array(WAVE_POINTS);
+let waveVelocities=new Float32Array(WAVE_POINTS);
+const SHORE_Y=()=>H*0.82;
+const WAVE_BASE=()=>H*0.55;
+
+function resize(){W=C.width=innerWidth;H=C.height=innerHeight}
+resize();
+addEventListener('resize',resize);
+
+// Custom cursor
+addEventListener('mousemove',e=>{mouseX=e.clientX;mouseY=e.clientY;cursor.style.left=e.clientX+'px';cursor.style.top=e.clientY+'px'});
+addEventListener('mousedown',e=>{mouseDown=true;cursor.classList.add('active');if(playing)createSwell(e.clientX)});
+addEventListener('mouseup',()=>{mouseDown=false;cursor.classList.remove('active')});
+addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];mouseX=t.clientX;mouseY=t.clientY;mouseDown=true;if(playing)createSwell(t.clientX)},{passive:false});
+addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];mouseX=t.clientX;mouseY=t.clientY},{passive:false});
+addEventListener('touchend',()=>{mouseDown=false});
+
+function createSwell(x){
+  const idx=Math.floor((x/W)*WAVE_POINTS);
+  const now=Date.now();
+  const power=now-lastClick<300?-18:-14;
+  lastClick=now;
+  for(let i=-8;i<=8;i++){
+    const pi=idx+i;
+    if(pi>=0&&pi<WAVE_POINTS){
+      const dist=Math.abs(i)/8;
+      waveVelocities[pi]+=power*(1-dist*dist);
+    }
+  }
+  // Ripple effect
+  ripples.push({x,y:getWaveY(x),r:0,maxR:80+Math.random()*40,alpha:0.8});
+}
+
+function getWaveY(px){
+  const idx=(px/W)*WAVE_POINTS;
+  const i=Math.floor(idx);
+  const f=idx-i;
+  const a=waveHeights[Math.max(0,Math.min(WAVE_POINTS-1,i))];
+  const b=waveHeights[Math.max(0,Math.min(WAVE_POINTS-1,i+1))];
+  return WAVE_BASE()+(a*(1-f)+b*f);
+}
+
+function updateWave(){
+  const spring=0.025,damp=0.97,spread=0.24;
+  for(let i=0;i<WAVE_POINTS;i++){
+    waveVelocities[i]+=-spring*waveHeights[i];
+    waveVelocities[i]*=damp;
+    waveHeights[i]+=waveVelocities[i];
+  }
+  // Propagation passes
+  let leftD=new Float32Array(WAVE_POINTS),rightD=new Float32Array(WAVE_POINTS);
+  for(let p=0;p<3;p++){
+    for(let i=0;i<WAVE_POINTS;i++){
+      if(i>0){leftD[i]=spread*(waveHeights[i]-waveHeights[i-1]);waveVelocities[i-1]+=leftD[i]}
+      if(i<WAVE_POINTS-1){rightD[i]=spread*(waveHeights[i]-waveHeights[i+1]);waveVelocities[i+1]+=rightD[i]}
+    }
+    for(let i=0;i<WAVE_POINTS;i++){
+      if(i>0)waveHeights[i-1]+=leftD[i];
+      if(i<WAVE_POINTS-1)waveHeights[i+1]+=rightD[i];
+    }
+  }
+  // Natural subtle sway
+  waveTime+=0.015;
+  for(let i=0;i<WAVE_POINTS;i++){
+    waveHeights[i]+=Math.sin(waveTime+i*0.15)*0.08+Math.sin(waveTime*0.7+i*0.08)*0.05;
+  }
+}
+
+function spawnOrb(){
+  const size=10+Math.random()*14;
+  orbs.push({
+    x:Math.random()*W*0.8+W*0.1,
+    y:WAVE_BASE()-60-Math.random()*100,
+    r:size,
+    vx:(Math.random()-0.5)*0.3,
+    vy:0.15+Math.random()*0.2,
+    glow:Math.random()*0.4+0.6,
+    hue:170+Math.random()*50,
+    phase:Math.random()*Math.PI*2,
+    collected:false
+  });
+}
+
+function spawnMine(){
+  mines.push({
+    x:Math.random()*W*0.8+W*0.1,
+    y:WAVE_BASE()-40-Math.random()*80,
+    r:14+Math.random()*6,
+    vx:(Math.random()-0.5)*0.4,
+    vy:0.2+Math.random()*0.15,
+    rot:Math.random()*Math.PI*2,
+    rotSpeed:(Math.random()-0.5)*0.03
+  });
+}
+
+function spawnJellyfish(){
+  jellyfish.push({
+    x:Math.random()*W,
+    y:WAVE_BASE()+20+Math.random()*80,
+    phase:Math.random()*Math.PI*2,
+    size:20+Math.random()*20,
+    hue:260+Math.random()*60,
+    alpha:0.2+Math.random()*0.3
+  });
+}
+
+function drawMoon(){
+  const mx=W*0.78,my=H*0.12,mr=35;
+  moonGlow+=0.01;
+  const g=X.createRadialGradient(mx,my,mr*0.3,mx,my,mr*4);
+  g.addColorStop(0,'rgba(220,240,255,0.15)');
+  g.addColorStop(0.3,'rgba(180,210,240,0.06)');
+  g.addColorStop(1,'rgba(180,210,240,0)');
+  X.fillStyle=g;X.beginPath();X.arc(mx,my,mr*4,0,Math.PI*2);X.fill();
+  const mg=X.createRadialGradient(mx,my,0,mx,my,mr);
+  mg.addColorStop(0,'rgba(240,250,255,0.95)');
+  mg.addColorStop(0.7,'rgba(200,230,255,0.7)');
+  mg.addColorStop(1,'rgba(180,210,240,0.1)');
+  X.fillStyle=mg;X.beginPath();X.arc(mx,my,mr,0,Math.PI*2);X.fill();
+  // Moon reflection on water
+  const ry=getWaveY(mx)+10;
+  for(let i=0;i<12;i++){
+    const fy=ry+i*8+Math.sin(waveTime*2+i*0.5)*3;
+    const fw=12-i*0.8+Math.sin(waveTime+i)*2;
+    X.fillStyle=`rgba(220,240,255,${0.08-i*0.006})`;
+    X.fillRect(mx-fw,fy,fw*2,3);
+  }
+}
+
+function drawStars(){
+  if(frameCount%4!==0)return;
+  for(let i=0;i<2;i++){
+    const sx=Math.random()*W,sy=Math.random()*WAVE_BASE()*0.6;
+    const bright=Math.random()*0.5+0.2;
+    X.fillStyle=`rgba(200,220,255,${bright})`;
+    X.fillRect(sx,sy,1.2,1.2);
+  }
+}
+
+function drawOcean(){
+  // Water body
+  const wg=X.createLinearGradient(0,WAVE_BASE()-40,0,H);
+  wg.addColorStop(0,'rgba(8,30,60,0.9)');
+  wg.addColorStop(0.3,'rgba(5,20,50,0.95)');
+  wg.addColorStop(1,'rgba(3,10,30,1)');
+  X.fillStyle=wg;
+  X.beginPath();
+  X.moveTo(0,H);
+  for(let i=0;i<=WAVE_POINTS;i++){
+    const px=(i/WAVE_POINTS)*W;
+    const py=WAVE_BASE()+waveHeights[Math.min(i,WAVE_POINTS-1)];
+    if(i===0)X.moveTo(px,py);
+    else X.lineTo(px,py);
+  }
+  X.lineTo(W,H);X.lineTo(0,H);X.closePath();X.fill();
+
+  // Bioluminescent wave crest
+  X.strokeStyle='rgba(80,220,220,0.35)';
+  X.lineWidth=2.5;
+  X.shadowBlur=20;X.shadowColor='rgba(80,220,220,0.4)';
+  X.beginPath();
+  for(let i=0;i<=WAVE_POINTS;i++){
+    const px=(i/WAVE_POINTS)*W;
+    const py=WAVE_BASE()+waveHeights[Math.min(i,WAVE_POINTS-1)];
+    if(i===0)X.moveTo(px,py);else X.lineTo(px,py);
+  }
+  X.stroke();
+  X.shadowBlur=0;
+
+  // Secondary glow line
+  X.strokeStyle='rgba(94,234,212,0.15)';
+  X.lineWidth=6;
+  X.beginPath();
+  for(let i=0;i<=WAVE_POINTS;i++){
+    const px=(i/WAVE_POINTS)*W;
+    const py=WAVE_BASE()+waveHeights[Math.min(i,WAVE_POINTS-1)]+3;
+    if(i===0)X.moveTo(px,py);else X.lineTo(px,py);
+  }
+  X.stroke();
+
+  // Shore glow
+  const sg=X.createLinearGradient(0,SHORE_Y()-15,0,SHORE_Y()+15);
+  sg.addColorStop(0,'rgba(80,220,200,0)');
+  sg.addColorStop(0.5,`rgba(80,220,200,${0.06+Math.sin(waveTime)*0.02})`);
+  sg.addColorStop(1,'rgba(80,220,200,0)');
+  X.fillStyle=sg;
+  X.fillRect(0,SHORE_Y()-15,W,30);
+}
+
+function drawOrbs(){
+  orbs.forEach(o=>{
+    if(o.collected)return;
+    const pulse=Math.sin(o.phase+frameCount*0.05)*0.3+0.7;
+    // Outer glow
+    const g=X.createRadialGradient(o.x,o.y,0,o.x,o.y,o.r*3);
+    g.addColorStop(0,`hsla(${o.hue},90%,70%,${0.3*pulse*o.glow})`);
+    g.addColorStop(1,`hsla(${o.hue},90%,70%,0)`);
+    X.fillStyle=g;X.beginPath();X.arc(o.x,o.y,o.r*3,0,Math.PI*2);X.fill();
+    // Core
+    const cg=X.createRadialGradient(o.x,o.y,0,o.x,o.y,o.r);
+    cg.addColorStop(0,`hsla(${o.hue},95%,85%,${0.9*pulse})`);
+    cg.addColorStop(0.6,`hsla(${o.hue},90%,60%,${0.6*pulse})`);
+    cg.addColorStop(1,`hsla(${o.hue},80%,40%,0)`);
+    X.fillStyle=cg;X.beginPath();X.arc(o.x,o.y,o.r,0,Math.PI*2);X.fill();
+  });
+}
+
+function drawMines(){
+  mines.forEach(m=>{
+    X.save();X.translate(m.x,m.y);X.rotate(m.rot);
+    // Spiky mine
+    const spikes=8;
+    X.fillStyle='rgba(200,50,60,0.7)';
+    X.shadowBlur=15;X.shadowColor='rgba(255,60,60,0.4)';
+    X.beginPath();
+    for(let i=0;i<spikes;i++){
+      const a=(i/spikes)*Math.PI*2;
+      const ir=m.r*0.6,or=m.r;
+      X.lineTo(Math.cos(a)*or,Math.sin(a)*or);
+      const a2=((i+0.5)/spikes)*Math.PI*2;
+      X.lineTo(Math.cos(a2)*ir,Math.sin(a2)*ir);
+    }
+    X.closePath();X.fill();
+    X.shadowBlur=0;
+    // Inner glow
+    const mg=X.createRadialGradient(0,0,0,0,0,m.r*0.5);
+    mg.addColorStop(0,'rgba(255,100,100,0.5)');
+    mg.addColorStop(1,'rgba(255,50,50,0)');
+    X.fillStyle=mg;X.beginPath();X.arc(0,0,m.r*0.5,0,Math.PI*2);X.fill();
+    X.restore();
+  });
+}
+
+function drawJellyfish(){
+  jellyfish.forEach(j=>{
+    const bob=Math.sin(j.phase+frameCount*0.02)*8;
+    const jy=j.y+bob;
+    const tentacleWave=Math.sin(frameCount*0.03+j.phase);
+    // Bell
+    X.fillStyle=`hsla(${j.hue},60%,60%,${j.alpha*0.4})`;
+    X.shadowBlur=20;X.shadowColor=`hsla(${j.hue},70%,60%,${j.alpha*0.3})`;
+    X.beginPath();
+    X.arc(j.x,jy,j.size*0.5,Math.PI,0);
+    X.quadraticCurveTo(j.x+j.size*0.5,jy+j.size*0.2,j.x,jy+j.size*0.1);
+    X.quadraticCurveTo(j.x-j.size*0.5,jy+j.size*0.2,j.x-j.size*0.5,jy);
+    X.fill();
+    X.shadowBlur=0;
+    // Tentacles
+    X.strokeStyle=`hsla(${j.hue},60%,70%,${j.alpha*0.25})`;
+    X.lineWidth=1.5;
+    for(let t=-2;t<=2;t++){
+      X.beginPath();
+      X.moveTo(j.x+t*j.size*0.12,jy+j.size*0.1);
+      X.quadraticCurveTo(
+        j.x+t*j.size*0.12+tentacleWave*8,jy+j.size*0.5,
+        j.x+t*j.size*0.15+tentacleWave*12,jy+j.size*0.8
+      );
+      X.stroke();
+    }
+  });
+}
+
+function drawRipples(){
+  ripples.forEach(r=>{
+    X.strokeStyle=`rgba(80,220,220,${r.alpha})`;
+    X.lineWidth=2;
+    X.beginPath();X.arc(r.x,r.y,r.r,0,Math.PI*2);X.stroke();
+    // Inner ring
+    if(r.r>10){
+      X.strokeStyle=`rgba(94,234,212,${r.alpha*0.5})`;
+      X.lineWidth=1;
+      X.beginPath();X.arc(r.x,r.y,r.r*0.6,0,Math.PI*2);X.stroke();
+    }
+  });
+}
+
+function drawParticles(){
+  particles.forEach(p=>{
+    X.fillStyle=`hsla(${p.hue},90%,70%,${p.alpha})`;
+    X.shadowBlur=8;X.shadowColor=`hsla(${p.hue},90%,60%,${p.alpha*0.5})`;
+    X.beginPath();X.arc(p.x,p.y,p.r,0,Math.PI*2);X.fill();
+  });
+  X.shadowBlur=0;
+}
+
+function burstParticles(x,y,hue,count){
+  for(let i=0;i<count;i++){
+    const a=Math.random()*Math.PI*2;
+    const spd=1+Math.random()*4;
+    particles.push({
+      x,y,
+      vx:Math.cos(a)*spd,
+      vy:Math.sin(a)*spd-1,
+      r:2+Math.random()*3,
+      hue:hue+Math.random()*30-15,
+      alpha:0.9,
+      life:40+Math.random()*30
+    });
+  }
+}
+
+function collectOrb(o){
+  o.collected=true;
+  combo++;
+  if(combo>maxCombo)maxCombo=combo;
+  collected++;
+  const mult=Math.min(combo,8);
+  score+=10*mult;
+  scoreEl.textContent=score;
+  if(combo>1){
+    comboEl.textContent=`×${combo}`;
+    comboEl.classList.add('pop');
+    setTimeout(()=>comboEl.classList.remove('pop'),120);
+  }
+  burstParticles(o.x,o.y,o.hue,20);
+}
+
+function hitMine(m){
+  lives--;
+  combo=0;
+  comboEl.textContent='';
+  updateLives();
+  burstParticles(m.x,m.y,0,25);
+  // Screen flash
+  X.fillStyle='rgba(255,50,50,0.15)';
+  X.fillRect(0,0,W,H);
+  if(lives<=0)endGame();
+}
+
+function updateLives(){
+  livesEl.innerHTML='';
+  for(let i=0;i<3;i++){
+    const d=document.createElement('div');
+    d.className='life'+(i>=lives?' lost':'');
+    livesEl.appendChild(d);
+  }
+}
+
+function endGame(){
+  playing=false;
+  const ov=document.getElementById('overlay');
+  ov.classList.remove('hidden');
+  ov.innerHTML=`
+    <div class="emoji">🌊</div>
+    <h1>TIDE</h1>
+    <div class="score-display">Score: ${score}</div>
+    <div class="stats">
+      <span>Collected: ${collected}</span>
+      <span>Max Combo: ×${maxCombo}</span>
+      <span>Missed: ${missed}</span>
+    </div>
+    <button onclick="startGame()">Ride Again</button>
+  `;
+}
+
+function startGame(){
+  score=0;combo=0;maxCombo=0;lives=3;collected=0;missed=0;
+  orbs=[];particles=[];ripples=[];mines=[];
+  scoreEl.textContent='0';comboEl.textContent='';
+  waveHeights.fill(0);waveVelocities.fill(0);
+  overlay.classList.add('hidden');
+  updateLives();
+  playing=true;
+}
+
+startBtn.onclick=startGame;
+
+let spawnTimer=0,mineTimer=0;
+
+function update(){
+  if(!playing)return;
+  frameCount++;
+  updateWave();
+  
+  // Spawn orbs
+  spawnTimer++;
+  if(spawnTimer>70-Math.min(score/50,30)){spawnTimer=0;spawnOrb()}
+  
+  // Spawn mines (after score 50)
+  mineTimer++;
+  if(score>50&&mineTimer>120-Math.min(score/100,50)){mineTimer=0;spawnMine()}
+  
+  // Jellyfish (ambient)
+  if(frameCount%300===0&&jellyfish.length<5)spawnJellyfish();
+  
+  // Update orbs
+  orbs=orbs.filter(o=>{
+    if(o.collected)return false;
+    const waveY=getWaveY(o.x);
+    // Float on wave if at wave level
+    if(o.y>=waveY-o.r){
+      o.y=waveY-o.r;
+      // Carried by wave slope
+      const idx=Math.floor((o.x/W)*WAVE_POINTS);
+      if(idx>0&&idx<WAVE_POINTS-1){
+        const slope=waveHeights[idx+1]-waveHeights[idx-1];
+        o.vx+=slope*0.15;
+      }
+      o.vy=0;
+    }else{
+      o.vy+=0.04;
+    }
+    o.x+=o.vx;o.y+=o.vy;
+    o.vx*=0.995;
+    
+    // Check if reached shore
+    if(o.y>=SHORE_Y()-o.r){
+      collectOrb(o);
+      return false;
+    }
+    // Off screen
+    if(o.x<-50||o.x>W+50){missed++;combo=0;comboEl.textContent='';return false}
+    return true;
+  });
+  
+  // Update mines
+  mines=mines.filter(m=>{
+    const waveY=getWaveY(m.x);
+    if(m.y>=waveY-m.r){
+      m.y=waveY-m.r;
+      const idx=Math.floor((m.x/W)*WAVE_POINTS);
+      if(idx>0&&idx<WAVE_POINTS-1){
+        const slope=waveHeights[idx+1]-waveHeights[idx-1];
+        m.vx+=slope*0.12;
+      }
+      m.vy=0;
+    }else{
+      m.vy+=0.03;
+    }
+    m.x+=m.vx;m.y+=m.vy;m.vx*=0.995;
+    m.rot+=m.rotSpeed;
+    // Mine reaches shore = lose life
+    if(m.y>=SHORE_Y()-m.r){hitMine(m);return false}
+    if(m.x<-50||m.x>W+50)return false;
+    return true;
+  });
+  
+  // Update ripples
+  ripples=ripples.filter(r=>{
+    r.r+=3;r.alpha-=0.02;
+    return r.alpha>0;
+  });
+  
+  // Update particles
+  particles=particles.filter(p=>{
+    p.x+=p.vx;p.y+=p.vy;p.vy+=0.05;
+    p.alpha-=0.02;p.r*=0.98;
+    return p.alpha>0;
+  });
+  
+  // Jellyfish drift
+  jellyfish.forEach(j=>{
+    j.x+=Math.sin(j.phase+frameCount*0.005)*0.3;
+    if(j.x<-60)j.x=W+60;
+    if(j.x>W+60)j.x=-60;
+  });
+}
+
+function draw(){
+  // Clear with subtle trail
+  X.fillStyle='rgba(3,6,24,0.25)';
+  X.fillRect(0,0,W,H);
+  
+  drawStars();
+  drawMoon();
+  drawJellyfish();
+  drawOcean();
+  drawRipples();
+  drawOrbs();
+  drawMines();
+  drawParticles();
+  
+  // Ambient underwater plankton glow
+  if(frameCount%3===0){
+    const px=Math.random()*W;
+    const py=WAVE_BASE()+20+Math.random()*(H-WAVE_BASE()-20);
+    X.fillStyle=`rgba(80,220,200,${Math.random()*0.15})`;
+    X.beginPath();X.arc(px,py,1+Math.random()*2,0,Math.PI*2);X.fill();
+  }
+}
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Spawn initial jellyfish
+for(let i=0;i<3;i++)spawnJellyfish();
+updateLives();
+loop();
+</script>
+</body>
+</html>
