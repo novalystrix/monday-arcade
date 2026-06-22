@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Helix Drop — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #08080f;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+.back-link:hover { color: #a080ff; }
+canvas { display: block; border-radius: 8px; }
+#ui-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 50;
+}
+#score-display {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  font-size: 28px;
+  font-weight: bold;
+  color: #fff;
+  text-shadow: 0 0 20px rgba(120,80,255,0.8);
+  z-index: 60;
+}
+#combo-display {
+  position: fixed;
+  top: 54px;
+  right: 24px;
+  font-size: 14px;
+  color: #ff6b9d;
+  text-shadow: 0 0 10px rgba(255,107,157,0.6);
+  z-index: 60;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+#start-screen, #game-over-screen {
+  pointer-events: auto;
+  text-align: center;
+}
+#start-screen h1 {
+  font-size: 42px;
+  background: linear-gradient(135deg, #a855f7, #6366f1, #ec4899);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+}
+#start-screen p {
+  color: #888;
+  margin-bottom: 30px;
+  font-size: 14px;
+}
+#game-over-screen h2 {
+  font-size: 32px;
+  color: #ef4444;
+  text-shadow: 0 0 30px rgba(239,68,68,0.5);
+  margin-bottom: 10px;
+}
+#game-over-screen .final-score {
+  font-size: 48px;
+  background: linear-gradient(135deg, #a855f7, #ec4899);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 6px;
+}
+#game-over-screen .best-score {
+  font-size: 14px;
+  color: #888;
+  margin-bottom: 24px;
+}
+.btn {
+  background: linear-gradient(135deg, #7c3aed, #6366f1);
+  border: none;
+  color: #fff;
+  padding: 14px 40px;
+  font-size: 16px;
+  font-family: 'Courier New', monospace;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 0 20px rgba(99,102,241,0.4);
+}
+.btn:hover { transform: scale(1.05); box-shadow: 0 0 30px rgba(99,102,241,0.6); }
+.btn:active { transform: scale(0.97); }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← arcade</a>
+<canvas id="game"></canvas>
+<div id="score-display">0</div>
+<div id="combo-display"></div>
+<div id="ui-overlay">
+  <div id="start-screen">
+    <h1>HELIX DROP</h1>
+    <p>Tap or click to drop the ball through the helix.<br>Avoid the red danger zones!</p>
+    <button class="btn" onclick="startGame()">PLAY</button>
+  </div>
+  <div id="game-over-screen" class="hidden">
+    <h2>GAME OVER</h2>
+    <div class="final-score" id="final-score">0</div>
+    <div class="best-score" id="best-score"></div>
+    <button class="btn" onclick="startGame()">RETRY</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const scoreDisplay = document.getElementById('score-display');
+const comboDisplay = document.getElementById('combo-display');
+const startScreen = document.getElementById('start-screen');
+const gameOverScreen = document.getElementById('game-over-screen');
+
+// Sizing
+function resize() {
+  const s = Math.min(window.innerWidth, window.innerHeight, 600);
+  canvas.width = s;
+  canvas.height = s;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Constants
+const CENTER_X = () => canvas.width / 2;
+const CENTER_Y = () => canvas.height / 2;
+const TOWER_RADIUS = () => canvas.width * 0.32;
+const BALL_RADIUS = 8;
+const GRAVITY = 0.12;
+const PLATFORM_SPACING = 55;
+const PLATFORM_THICKNESS = 10;
+const NUM_PLATFORMS = 12;
+const ROTATION_SPEED = 0.015;
+
+// State
+let gameState = 'menu'; // menu, playing, over
+let ball, platforms, rotation, score, combo, bestScore, particles, shakeTimer, cameraY, level;
+
+bestScore = parseInt(localStorage.getItem('helix-drop-best') || '0');
+
+// Colors
+const SAFE_COLORS = [
+  '#a855f7', '#8b5cf6', '#6366f1', '#818cf8',
+  '#c084fc', '#7c3aed', '#6d28d9', '#5b21b6'
+];
+const DANGER_COLOR = '#ef4444';
+const DANGER_GLOW = 'rgba(239,68,68,0.4)';
+
+class Particle {
+  constructor(x, y, color, vx, vy, life) {
+    this.x = x; this.y = y; this.color = color;
+    this.vx = vx; this.vy = vy;
+    this.life = life; this.maxLife = life;
+    this.size = Math.random() * 4 + 2;
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.05;
+    this.life--;
+  }
+  draw() {
+    const alpha = this.life / this.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function createPlatform(index) {
+  const gapSize = 0.3 + Math.random() * 0.25; // gap in radians fraction (of 2PI)
+  const gapStart = Math.random() * Math.PI * 2;
+  const isDanger = Math.random() < Math.min(0.15 + level * 0.03, 0.45);
+  const colorIdx = Math.floor(Math.random() * SAFE_COLORS.length);
+  return {
+    y: index * PLATFORM_SPACING,
+    gapStart: gapStart,
+    gapSize: gapSize * Math.PI * 2,
+    isDanger: isDanger,
+    color: isDanger ? DANGER_COLOR : SAFE_COLORS[colorIdx],
+    broken: false,
+    breakAnim: 0,
+    scored: false,
+  };
+}
+
+function initGame() {
+  ball = {
+    x: CENTER_X(),
+    y: 40,
+    vy: 0,
+    dropping: false,
+    dead: false,
+    smashCount: 0,
+  };
+  platforms = [];
+  for (let i = 0; i < NUM_PLATFORMS; i++) {
+    platforms.push(createPlatform(i + 2));
+  }
+  rotation = 0;
+  score = 0;
+  combo = 0;
+  particles = [];
+  shakeTimer = 0;
+  cameraY = 0;
+  level = 0;
+}
+
+function startGame() {
+  initGame();
+  startScreen.classList.add('hidden');
+  gameOverScreen.classList.add('hidden');
+  gameState = 'playing';
+  scoreDisplay.textContent = '0';
+}
+
+function gameOver() {
+  gameState = 'over';
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('helix-drop-best', bestScore);
+  }
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('best-score').textContent = 'Best: ' + bestScore;
+  gameOverScreen.classList.remove('hidden');
+  // death particles
+  for (let i = 0; i < 40; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 4 + 1;
+    particles.push(new Particle(
+      ball.x, ball.y - cameraY,
+      '#ef4444',
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed,
+      30 + Math.random() * 20
+    ));
+  }
+  shakeTimer = 15;
+}
+
+function spawnBreakParticles(px, py, color) {
+  for (let i = 0; i < 12; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 0.5;
+    particles.push(new Particle(
+      px, py, color,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed - 1,
+      20 + Math.random() * 15
+    ));
+  }
+}
+
+// Input
+let pressing = false;
+function onDown() { if (gameState === 'playing') pressing = true; }
+function onUp() { pressing = false; }
+canvas.addEventListener('mousedown', onDown);
+canvas.addEventListener('mouseup', onUp);
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); onDown(); });
+canvas.addEventListener('touchend', (e) => { e.preventDefault(); onUp(); });
+document.addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); onDown(); } });
+document.addEventListener('keyup', (e) => { if (e.code === 'Space') onUp(); });
+
+function getBallAngle() {
+  return ((Math.atan2(0, -1) + rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+}
+
+function isInGap(platform) {
+  const ballAngle = getBallAngle();
+  let gStart = ((platform.gapStart + rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+  let gEnd = (gStart + platform.gapSize) % (Math.PI * 2);
+  
+  if (gEnd > gStart) {
+    return ballAngle >= gStart && ballAngle <= gEnd;
+  } else {
+    return ballAngle >= gStart || ballAngle <= gEnd;
+  }
+}
+
+function update() {
+  if (gameState !== 'playing') return;
+
+  // Rotate tower
+  rotation += ROTATION_SPEED + level * 0.002;
+
+  // Ball physics
+  if (pressing) {
+    ball.vy += GRAVITY * 2.5;
+    ball.dropping = true;
+  } else {
+    ball.vy += GRAVITY;
+  }
+  
+  ball.vy = Math.min(ball.vy, 8);
+  ball.y += ball.vy;
+
+  // Camera follows ball
+  const targetCam = ball.y - canvas.height * 0.3;
+  cameraY += (targetCam - cameraY) * 0.1;
+
+  // Platform collision
+  for (let p of platforms) {
+    if (p.broken) continue;
+    
+    const platScreenY = p.y;
+    const ballBottom = ball.y + BALL_RADIUS;
+    const prevBottom = ball.y + BALL_RADIUS - ball.vy;
+    
+    if (prevBottom <= platScreenY && ballBottom >= platScreenY && ball.vy > 0) {
+      if (isInGap(p)) {
+        // Fall through gap
+        if (!p.scored) {
+          p.scored = true;
+          if (pressing) {
+            ball.smashCount++;
+            combo = ball.smashCount;
+            const points = combo * 2;
+            score += points;
+            comboDisplay.textContent = 'x' + combo + ' COMBO!';
+            comboDisplay.style.opacity = 1;
+          } else {
+            ball.smashCount = 0;
+            combo = 0;
+            comboDisplay.style.opacity = 0;
+            score += 1;
+          }
+          scoreDisplay.textContent = score;
+          level = Math.floor(score / 15);
+        }
+        continue;
+      }
+      
+      if (p.isDanger) {
+        gameOver();
+        return;
+      }
+      
+      // Land on platform
+      if (pressing && ball.vy > 2) {
+        // Smash through!
+        p.broken = true;
+        p.breakAnim = 1;
+        spawnBreakParticles(ball.x, platScreenY - cameraY, p.color);
+        ball.vy *= 0.7;
+        if (!p.scored) {
+          p.scored = true;
+          ball.smashCount++;
+          combo = ball.smashCount;
+          const points = combo * 2;
+          score += points;
+          scoreDisplay.textContent = score;
+          comboDisplay.textContent = 'x' + combo + ' COMBO!';
+          comboDisplay.style.opacity = 1;
+          level = Math.floor(score / 15);
+        }
+        shakeTimer = 4;
+      } else {
+        // Bounce
+        ball.y = platScreenY - BALL_RADIUS;
+        ball.vy = -3;
+        ball.smashCount = 0;
+        combo = 0;
+        comboDisplay.style.opacity = 0;
+      }
+    }
+  }
+
+  // Recycle platforms
+  const topThresh = cameraY - PLATFORM_SPACING * 2;
+  for (let i = platforms.length - 1; i >= 0; i--) {
+    if (platforms[i].y < topThresh) {
+      const maxY = Math.max(...platforms.map(p => p.y));
+      platforms[i] = createPlatform(0);
+      platforms[i].y = maxY + PLATFORM_SPACING;
+    }
+  }
+
+  // Fall off bottom
+  if (ball.y > cameraY + canvas.height + 100) {
+    gameOver();
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update();
+    if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+
+  if (shakeTimer > 0) shakeTimer--;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // Background gradient
+  const bgGrad = ctx.createRadialGradient(CENTER_X(), CENTER_Y(), 0, CENTER_X(), CENTER_Y(), canvas.width * 0.7);
+  bgGrad.addColorStop(0, '#12101f');
+  bgGrad.addColorStop(1, '#08080f');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  
+  // Screen shake
+  if (shakeTimer > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * shakeTimer * 2,
+      (Math.random() - 0.5) * shakeTimer * 2
+    );
+  }
+
+  const cx = CENTER_X();
+  const radius = TOWER_RADIUS();
+
+  // Draw central pillar
+  const pillarGrad = ctx.createLinearGradient(cx - 3, 0, cx + 3, canvas.height);
+  pillarGrad.addColorStop(0, '#2a1f4e');
+  pillarGrad.addColorStop(0.5, '#1a1230');
+  pillarGrad.addColorStop(1, '#0d0a1a');
+  ctx.fillStyle = pillarGrad;
+  ctx.fillRect(cx - 3, 0, 6, canvas.height);
+
+  // Draw platforms
+  for (let p of platforms) {
+    if (p.broken) continue;
+    const py = p.y - cameraY;
+    if (py < -30 || py > canvas.height + 30) continue;
+
+    const segments = 60;
+    const segAngle = (Math.PI * 2) / segments;
+    const gStart = ((p.gapStart + rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    const gEnd = (gStart + p.gapSize) % (Math.PI * 2);
+
+    for (let s = 0; s < segments; s++) {
+      const a1 = s * segAngle;
+      const a2 = (s + 1) * segAngle;
+      const mid = (a1 + a2) / 2;
+      
+      // Check if in gap
+      let inGap;
+      if (gEnd > gStart) {
+        inGap = mid >= gStart && mid <= gEnd;
+      } else {
+        inGap = mid >= gStart || mid <= gEnd;
+      }
+      if (inGap) continue;
+
+      // 3D-ish projection
+      const x1 = cx + Math.cos(a1) * radius;
+      const x2 = cx + Math.cos(a2) * radius;
+      const depth1 = (Math.sin(a1) + 1) / 2;
+      const depth2 = (Math.sin(a2) + 1) / 2;
+      const y1 = py - depth1 * 15;
+      const y2 = py - depth2 * 15;
+
+      // Only draw front-facing segments (depth > 0.3)
+      const avgDepth = (depth1 + depth2) / 2;
+      if (avgDepth < 0.2) continue;
+
+      ctx.globalAlpha = 0.3 + avgDepth * 0.7;
+      
+      if (p.isDanger) {
+        ctx.shadowColor = DANGER_GLOW;
+        ctx.shadowBlur = 12;
+      } else {
+        ctx.shadowColor = p.color + '66';
+        ctx.shadowBlur = 8;
+      }
+
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = PLATFORM_THICKNESS * avgDepth;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+
+  // Draw ball
+  if (gameState === 'playing' || gameState === 'over') {
+    const by = ball.y - cameraY;
+    
+    // Ball glow
+    const ballGlow = ctx.createRadialGradient(cx, by, 0, cx, by, 25);
+    ballGlow.addColorStop(0, 'rgba(168,85,247,0.5)');
+    ballGlow.addColorStop(1, 'rgba(168,85,247,0)');
+    ctx.fillStyle = ballGlow;
+    ctx.beginPath();
+    ctx.arc(cx, by, 25, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ball trail
+    if (ball.vy > 1) {
+      const trailGrad = ctx.createLinearGradient(cx, by - ball.vy * 4, cx, by);
+      trailGrad.addColorStop(0, 'rgba(168,85,247,0)');
+      trailGrad.addColorStop(1, 'rgba(168,85,247,0.4)');
+      ctx.fillStyle = trailGrad;
+      ctx.fillRect(cx - 4, by - ball.vy * 4, 8, ball.vy * 4);
+    }
+
+    // Ball
+    const ballGrad = ctx.createRadialGradient(cx - 2, by - 2, 0, cx, by, BALL_RADIUS);
+    ballGrad.addColorStop(0, '#e9d5ff');
+    ballGrad.addColorStop(0.5, '#a855f7');
+    ballGrad.addColorStop(1, '#7c3aed');
+    ctx.fillStyle = ballGrad;
+    ctx.beginPath();
+    ctx.arc(cx, by, BALL_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Combo fire effect
+    if (combo >= 3 && gameState === 'playing') {
+      for (let i = 0; i < 3; i++) {
+        const fx = cx + (Math.random() - 0.5) * 12;
+        const fy = by - BALL_RADIUS - Math.random() * 10;
+        const fs = Math.random() * 4 + 2;
+        ctx.globalAlpha = 0.5 + Math.random() * 0.3;
+        ctx.fillStyle = combo >= 5 ? '#ff6b9d' : '#f59e0b';
+        ctx.beginPath();
+        ctx.arc(fx, fy, fs, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Particles
+  for (let p of particles) {
+    p.draw();
+  }
+
+  ctx.restore();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
