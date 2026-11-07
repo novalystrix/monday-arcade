@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Crystal Cavern — monday Arcade</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.back-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  color: #6040cc;
+  text-decoration: none;
+  font-size: 13px;
+  z-index: 100;
+}
+.back-link:hover { color: #a070ff; }
+h1 {
+  margin-top: 10px;
+  font-size: 24px;
+  background: linear-gradient(90deg, #ff69b4, #40e0d0, #9370db, #ff69b4);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+}
+@keyframes shimmer { 0%{background-position:300% 0} 100%{background-position:-300% 0} }
+#hud {
+  display: flex;
+  gap: 24px;
+  margin: 6px 0 4px;
+  font-size: 14px;
+  color: #aaa;
+}
+#hud span { color: #40e0d0; font-weight: bold; }
+canvas { border-radius: 8px; }
+#startScreen {
+  position: fixed;
+  inset: 0;
+  background: rgba(10,10,26,0.95);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+#startScreen h2 {
+  font-size: 36px;
+  margin-bottom: 10px;
+  background: linear-gradient(90deg, #ff69b4, #40e0d0, #9370db);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+#startScreen p { color: #888; margin: 4px 0; font-size: 14px; }
+#startScreen .start-btn {
+  margin-top: 20px;
+  padding: 12px 40px;
+  background: linear-gradient(135deg, #40e0d0, #9370db);
+  border: none;
+  border-radius: 30px;
+  color: #fff;
+  font-size: 18px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+#startScreen .start-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 30px rgba(64,224,208,0.5);
+}
+#gameOver {
+  position: fixed;
+  inset: 0;
+  background: rgba(10,10,26,0.92);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+#gameOver h2 { font-size: 30px; color: #ff69b4; margin-bottom: 8px; }
+#gameOver .final-score { font-size: 22px; color: #40e0d0; margin-bottom: 6px; }
+#gameOver .final-depth { font-size: 16px; color: #9370db; margin-bottom: 16px; }
+#gameOver .start-btn {
+  padding: 12px 40px;
+  background: linear-gradient(135deg, #ff69b4, #9370db);
+  border: none;
+  border-radius: 30px;
+  color: #fff;
+  font-size: 18px;
+  font-family: inherit;
+  cursor: pointer;
+}
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Arcade</a>
+<h1>💎 Crystal Cavern</h1>
+<div id="hud">
+  Score: <span id="score">0</span> &nbsp;|&nbsp;
+  Depth: <span id="depth">0</span>m &nbsp;|&nbsp;
+  Gems: <span id="gems">0</span> &nbsp;|&nbsp;
+  Lives: <span id="lives">♥♥♥</span>
+</div>
+<canvas id="c"></canvas>
+
+<div id="startScreen">
+  <h2>💎 Crystal Cavern</h2>
+  <p>Navigate through shimmering caves</p>
+  <p>Collect gems • Dodge stalactites • Ride updrafts</p>
+  <p style="margin-top:12px; color:#666; font-size:12px">← → or A/D to move &nbsp;|&nbsp; Touch sides on mobile</p>
+  <button class="start-btn" id="startBtn">Enter the Cavern</button>
+</div>
+
+<div id="gameOver">
+  <h2>Cave Collapsed!</h2>
+  <div class="final-score" id="finalScore">Score: 0</div>
+  <div class="final-depth" id="finalDepth">Depth: 0m</div>
+  <button class="start-btn" id="restartBtn">Try Again</button>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = Math.min(480, window.innerWidth - 20);
+const H = Math.min(700, window.innerHeight - 90);
+canvas.width = W;
+canvas.height = H;
+
+// State
+let player, gems, stalactites, particles, updrafts, bgCrystals;
+let score, depth, gemCount, lives, gameSpeed, frameCount;
+let gameRunning = false;
+let keys = {};
+let touchX = null;
+let combo = 0;
+let comboTimer = 0;
+let screenShake = 0;
+let bestScore = +(localStorage.getItem('cc_best') || 0);
+
+// Colors
+const CRYSTAL_COLORS = ['#ff69b4','#40e0d0','#9370db','#ffd700','#00ff88','#ff6347','#87ceeb','#dda0dd'];
+const GEM_COLORS = ['#ff69b4','#40e0d0','#9370db','#ffd700','#00ff88'];
+
+function init() {
+  player = { x: W/2, y: H * 0.75, w: 20, h: 20, vx: 0, glow: 0, trail: [] };
+  gems = [];
+  stalactites = [];
+  particles = [];
+  updrafts = [];
+  bgCrystals = [];
+  score = 0;
+  depth = 0;
+  gemCount = 0;
+  lives = 3;
+  gameSpeed = 1.5;
+  frameCount = 0;
+  combo = 0;
+  comboTimer = 0;
+  screenShake = 0;
+  updateHUD();
+  // Pre-fill background crystals
+  for (let i = 0; i < 30; i++) {
+    bgCrystals.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      size: 2 + Math.random() * 6,
+      color: CRYSTAL_COLORS[Math.random() * CRYSTAL_COLORS.length | 0],
+      alpha: 0.1 + Math.random() * 0.3,
+      pulse: Math.random() * Math.PI * 2,
+      speed: 0.3 + Math.random() * 0.5
+    });
+  }
+}
+
+function updateHUD() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('depth').textContent = depth;
+  document.getElementById('gems').textContent = gemCount;
+  document.getElementById('lives').textContent = '♥'.repeat(Math.max(0, lives)) + '♡'.repeat(Math.max(0, 3-lives));
+}
+
+// Spawn functions
+function spawnGem() {
+  const color = GEM_COLORS[Math.random() * GEM_COLORS.length | 0];
+  const type = Math.random() < 0.12 ? 'mega' : 'normal';
+  gems.push({
+    x: 30 + Math.random() * (W - 60),
+    y: -20,
+    r: type === 'mega' ? 14 : 9,
+    color,
+    type,
+    pulse: 0,
+    sparkle: 0
+  });
+}
+
+function spawnStalactite() {
+  const w = 12 + Math.random() * 20;
+  stalactites.push({
+    x: Math.random() * W,
+    y: -40,
+    w: w,
+    h: 30 + Math.random() * 40,
+    speed: 0.3 + Math.random() * 0.5,
+    sway: Math.random() * Math.PI * 2,
+    swayAmp: Math.random() * 0.5,
+    glow: CRYSTAL_COLORS[Math.random() * CRYSTAL_COLORS.length | 0]
+  });
+}
+
+function spawnUpdraft() {
+  updrafts.push({
+    x: 40 + Math.random() * (W - 80),
+    y: -30,
+    w: 40 + Math.random() * 30,
+    h: 80 + Math.random() * 60,
+    alpha: 0,
+    particles: []
+  });
+}
+
+function addParticles(x, y, color, count, speed) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd = (speed || 2) * (0.5 + Math.random());
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * spd,
+      vy: Math.sin(angle) * spd,
+      life: 1,
+      decay: 0.015 + Math.random() * 0.025,
+      color,
+      size: 2 + Math.random() * 3
+    });
+  }
+}
+
+// Drawing
+function drawPlayer() {
+  const p = player;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  
+  // Glow
+  const glowR = 25 + Math.sin(frameCount * 0.08) * 5;
+  const grd = ctx.createRadialGradient(0, 0, 2, 0, 0, glowR);
+  grd.addColorStop(0, 'rgba(64,224,208,0.4)');
+  grd.addColorStop(0.5, 'rgba(147,112,219,0.15)');
+  grd.addColorStop(1, 'rgba(64,224,208,0)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(-glowR, -glowR, glowR*2, glowR*2);
+  
+  // Diamond shape
+  ctx.beginPath();
+  ctx.moveTo(0, -p.h/2);
+  ctx.lineTo(p.w/2, 0);
+  ctx.moveTo(0, -p.h/2);
+  ctx.lineTo(-p.w/2, 0);
+  ctx.lineTo(0, p.h/2);
+  ctx.lineTo(p.w/2, 0);
+  ctx.closePath();
+  
+  const grad = ctx.createLinearGradient(-p.w/2, -p.h/2, p.w/2, p.h/2);
+  grad.addColorStop(0, '#40e0d0');
+  grad.addColorStop(0.5, '#9370db');
+  grad.addColorStop(1, '#ff69b4');
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  
+  // Inner shine
+  ctx.beginPath();
+  ctx.moveTo(0, -p.h/2 + 4);
+  ctx.lineTo(p.w/2 - 4, 0);
+  ctx.lineTo(0, 2);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.fill();
+  
+  ctx.restore();
+}
+
+function drawTrail() {
+  for (let i = 0; i < player.trail.length; i++) {
+    const t = player.trail[i];
+    const alpha = t.life * 0.4;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, 3 * t.life, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(64,224,208,${alpha})`;
+    ctx.fill();
+  }
+}
+
+function drawGem(g) {
+  ctx.save();
+  ctx.translate(g.x, g.y);
+  
+  const pulseR = g.r + Math.sin(g.pulse) * 2;
+  
+  // Outer glow
+  const grd = ctx.createRadialGradient(0, 0, pulseR * 0.3, 0, 0, pulseR * 2.5);
+  grd.addColorStop(0, g.color + '60');
+  grd.addColorStop(1, g.color + '00');
+  ctx.fillStyle = grd;
+  ctx.fillRect(-pulseR*2.5, -pulseR*2.5, pulseR*5, pulseR*5);
+  
+  // Gem body (hexagon)
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
+    const method = i === 0 ? 'moveTo' : 'lineTo';
+    ctx[method](Math.cos(a) * pulseR, Math.sin(a) * pulseR);
+  }
+  ctx.closePath();
+  ctx.fillStyle = g.color;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  
+  // Sparkle
+  if (g.sparkle > 0) {
+    ctx.globalAlpha = g.sparkle;
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + frameCount * 0.05;
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a) * pulseR * 2, Math.sin(a) * pulseR * 2);
+    }
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  
+  // Mega gem indicator
+  if (g.type === 'mega') {
+    ctx.beginPath();
+    ctx.arc(0, 0, pulseR * 0.4, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fill();
+  }
+  
+  ctx.restore();
+}
+
+function drawStalactite(s) {
+  ctx.save();
+  ctx.translate(s.x + Math.sin(s.sway) * s.swayAmp * 10, s.y);
+  
+  // Glow
+  const grd = ctx.createRadialGradient(0, s.h/2, 2, 0, s.h/2, s.w);
+  grd.addColorStop(0, s.glow + '30');
+  grd.addColorStop(1, s.glow + '00');
+  ctx.fillStyle = grd;
+  ctx.fillRect(-s.w, 0, s.w*2, s.h);
+  
+  // Stalactite shape
+  ctx.beginPath();
+  ctx.moveTo(-s.w/2, 0);
+  ctx.lineTo(s.w/2, 0);
+  ctx.lineTo(s.w * 0.15, s.h);
+  ctx.lineTo(-s.w * 0.15, s.h);
+  ctx.closePath();
+  
+  const grad = ctx.createLinearGradient(0, 0, 0, s.h);
+  grad.addColorStop(0, '#2a1a3a');
+  grad.addColorStop(0.5, s.glow + '80');
+  grad.addColorStop(1, s.glow);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.strokeStyle = s.glow + '60';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  
+  ctx.restore();
+}
+
+function drawUpdraft(u) {
+  ctx.save();
+  ctx.globalAlpha = u.alpha * 0.3;
+  
+  const grad = ctx.createLinearGradient(u.x, u.y + u.h, u.x, u.y);
+  grad.addColorStop(0, '#40e0d000');
+  grad.addColorStop(0.5, '#40e0d040');
+  grad.addColorStop(1, '#40e0d000');
+  ctx.fillStyle = grad;
+  ctx.fillRect(u.x - u.w/2, u.y, u.w, u.h);
+  
+  // Updraft particles
+  for (const p of u.particles) {
+    ctx.globalAlpha = p.life * u.alpha * 0.6;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2, 0, Math.PI*2);
+    ctx.fillStyle = '#40e0d0';
+    ctx.fill();
+  }
+  
+  ctx.restore();
+}
+
+function drawBgCrystals() {
+  for (const c of bgCrystals) {
+    const a = c.alpha + Math.sin(c.pulse) * 0.1;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.translate(c.x, c.y);
+    
+    // Small crystal shape
+    ctx.beginPath();
+    ctx.moveTo(0, -c.size);
+    ctx.lineTo(c.size * 0.6, 0);
+    ctx.lineTo(0, c.size * 0.5);
+    ctx.lineTo(-c.size * 0.6, 0);
+    ctx.closePath();
+    ctx.fillStyle = c.color;
+    ctx.fill();
+    
+    ctx.restore();
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.save();
+    ctx.globalAlpha = p.life;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI*2);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawCombo() {
+  if (combo >= 2 && comboTimer > 0) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, comboTimer / 30);
+    ctx.font = 'bold 28px Courier New';
+    ctx.textAlign = 'center';
+    const grad = ctx.createLinearGradient(W/2 - 60, 0, W/2 + 60, 0);
+    grad.addColorStop(0, '#ff69b4');
+    grad.addColorStop(0.5, '#ffd700');
+    grad.addColorStop(1, '#40e0d0');
+    ctx.fillStyle = grad;
+    ctx.fillText(`${combo}x COMBO!`, W/2, H * 0.35);
+    ctx.restore();
+  }
+}
+
+// Cave walls
+function drawCaveWalls() {
+  const wallW = 15 + Math.sin(frameCount * 0.01 + depth * 0.005) * 8;
+  
+  // Left wall
+  const lgrd = ctx.createLinearGradient(0, 0, wallW + 15, 0);
+  lgrd.addColorStop(0, '#1a0a2e');
+  lgrd.addColorStop(0.6, '#1a0a2e80');
+  lgrd.addColorStop(1, '#1a0a2e00');
+  ctx.fillStyle = lgrd;
+  ctx.fillRect(0, 0, wallW + 15, H);
+  
+  // Right wall
+  const rgrd = ctx.createLinearGradient(W, 0, W - wallW - 15, 0);
+  rgrd.addColorStop(0, '#1a0a2e');
+  rgrd.addColorStop(0.6, '#1a0a2e80');
+  rgrd.addColorStop(1, '#1a0a2e00');
+  ctx.fillStyle = rgrd;
+  ctx.fillRect(W - wallW - 15, 0, wallW + 15, H);
+  
+  // Crystalline accents on walls
+  for (let y = 0; y < H; y += 40) {
+    const offset = Math.sin((y + frameCount * gameSpeed) * 0.03) * 4;
+    ctx.save();
+    ctx.globalAlpha = 0.2 + Math.sin((y + frameCount) * 0.05) * 0.1;
+    
+    // Left crystal
+    ctx.beginPath();
+    ctx.moveTo(wallW + offset, y);
+    ctx.lineTo(wallW + offset + 6, y + 10);
+    ctx.lineTo(wallW + offset, y + 20);
+    ctx.fillStyle = CRYSTAL_COLORS[(y / 40 | 0) % CRYSTAL_COLORS.length];
+    ctx.fill();
+    
+    // Right crystal
+    ctx.beginPath();
+    ctx.moveTo(W - wallW - offset, y + 20);
+    ctx.lineTo(W - wallW - offset - 6, y + 10);
+    ctx.lineTo(W - wallW - offset, y);
+    ctx.fillStyle = CRYSTAL_COLORS[((y / 40 | 0) + 3) % CRYSTAL_COLORS.length];
+    ctx.fill();
+    
+    ctx.restore();
+  }
+}
+
+// Collision
+function collides(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax - aw/2 < bx + bw/2 && ax + aw/2 > bx - bw/2 &&
+         ay - ah/2 < by + bh/2 && ay + ah/2 > by - bh/2;
+}
+
+function hitPlayer(ox, oy, ow, oh) {
+  return collides(player.x, player.y, player.w * 0.8, player.h * 0.8, ox, oy, ow, oh);
+}
+
+// Update
+function update() {
+  frameCount++;
+  
+  // Player movement
+  const accel = 0.6;
+  const friction = 0.88;
+  if (keys.left) player.vx -= accel;
+  if (keys.right) player.vx += accel;
+  if (touchX !== null) {
+    if (touchX < W * 0.4) player.vx -= accel;
+    else if (touchX > W * 0.6) player.vx += accel;
+  }
+  player.vx *= friction;
+  player.x += player.vx;
+  player.x = Math.max(25, Math.min(W - 25, player.x));
+  
+  // Trail
+  player.trail.push({ x: player.x, y: player.y, life: 1 });
+  if (player.trail.length > 15) player.trail.shift();
+  for (const t of player.trail) t.life -= 0.06;
+  player.trail = player.trail.filter(t => t.life > 0);
+  
+  // Increase difficulty
+  gameSpeed = 1.5 + depth * 0.003;
+  depth += gameSpeed * 0.05;
+  
+  // Spawn
+  if (frameCount % Math.max(20, 50 - depth * 0.1 | 0) === 0) spawnGem();
+  if (frameCount % Math.max(25, 60 - depth * 0.08 | 0) === 0) spawnStalactite();
+  if (frameCount % 200 === 0 && Math.random() < 0.4) spawnUpdraft();
+  
+  // Background crystals
+  for (const c of bgCrystals) {
+    c.y += gameSpeed * c.speed;
+    c.pulse += 0.03;
+    if (c.y > H + 10) {
+      c.y = -10;
+      c.x = Math.random() * W;
+    }
+  }
+  
+  // Gems
+  for (const g of gems) {
+    g.y += gameSpeed;
+    g.pulse += 0.08;
+    g.sparkle = Math.max(0, g.sparkle - 0.03);
+    
+    if (Math.random() < 0.02) g.sparkle = 1;
+    
+    if (hitPlayer(g.x, g.y, g.r*2, g.r*2)) {
+      const pts = g.type === 'mega' ? 50 : 10;
+      combo++;
+      comboTimer = 60;
+      const multiplier = Math.min(combo, 8);
+      score += pts * multiplier;
+      gemCount++;
+      addParticles(g.x, g.y, g.color, g.type === 'mega' ? 20 : 10, g.type === 'mega' ? 4 : 2);
+      screenShake = g.type === 'mega' ? 6 : 3;
+      g.y = H + 100; // remove
+    }
+  }
+  gems = gems.filter(g => g.y < H + 50);
+  
+  // Combo timer
+  if (comboTimer > 0) {
+    comboTimer--;
+    if (comboTimer === 0) combo = 0;
+  }
+  
+  // Stalactites
+  for (const s of stalactites) {
+    s.y += gameSpeed * (1 + s.speed);
+    s.sway += 0.03;
+    
+    const sx = s.x + Math.sin(s.sway) * s.swayAmp * 10;
+    if (hitPlayer(sx, s.y + s.h/2, s.w * 0.6, s.h * 0.7)) {
+      lives--;
+      screenShake = 10;
+      addParticles(player.x, player.y, '#ff6347', 15, 3);
+      combo = 0;
+      comboTimer = 0;
+      s.y = H + 100;
+      updateHUD();
+      if (lives <= 0) {
+        endGame();
+        return;
+      }
+    }
+  }
+  stalactites = stalactites.filter(s => s.y < H + 60);
+  
+  // Updrafts
+  for (const u of updrafts) {
+    u.y += gameSpeed * 0.8;
+    u.alpha = Math.min(1, u.alpha + 0.02);
+    
+    // Updraft particles
+    if (frameCount % 4 === 0) {
+      u.particles.push({
+        x: u.x - u.w/2 + Math.random() * u.w,
+        y: u.y + u.h,
+        life: 1
+      });
+    }
+    for (const p of u.particles) {
+      p.y -= 2;
+      p.life -= 0.02;
+    }
+    u.particles = u.particles.filter(p => p.life > 0);
+    
+    // Player in updraft
+    if (player.x > u.x - u.w/2 && player.x < u.x + u.w/2 &&
+        player.y > u.y && player.y < u.y + u.h) {
+      score += 1;
+      addParticles(player.x, player.y + 10, '#40e0d0', 1, 1);
+    }
+  }
+  updrafts = updrafts.filter(u => u.y < H + 100);
+  
+  // Particles
+  for (const p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.05;
+    p.life -= p.decay;
+  }
+  particles = particles.filter(p => p.life > 0);
+  
+  // Screen shake decay
+  if (screenShake > 0) screenShake *= 0.85;
+  if (screenShake < 0.2) screenShake = 0;
+  
+  updateHUD();
+}
+
+function endGame() {
+  gameRunning = false;
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('cc_best', bestScore);
+  }
+  document.getElementById('finalScore').textContent = `Score: ${score}  (Best: ${bestScore})`;
+  document.getElementById('finalDepth').textContent = `Depth: ${depth|0}m  •  Gems: ${gemCount}`;
+  document.getElementById('gameOver').style.display = 'flex';
+}
+
+function render() {
+  ctx.save();
+  
+  // Screen shake
+  if (screenShake > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * screenShake * 2,
+      (Math.random() - 0.5) * screenShake * 2
+    );
+  }
+  
+  // Background gradient that shifts with depth
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+  const hue1 = (240 + depth * 0.3) % 360;
+  const hue2 = (280 + depth * 0.2) % 360;
+  bgGrad.addColorStop(0, `hsl(${hue1}, 40%, 6%)`);
+  bgGrad.addColorStop(1, `hsl(${hue2}, 50%, 4%)`);
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(-10, -10, W+20, H+20);
+  
+  drawCaveWalls();
+  drawBgCrystals();
+  
+  // Draw updrafts
+  for (const u of updrafts) drawUpdraft(u);
+  
+  // Draw gems
+  for (const g of gems) drawGem(g);
+  
+  // Draw stalactites
+  for (const s of stalactites) drawStalactite(s);
+  
+  drawTrail();
+  drawPlayer();
+  drawParticles();
+  drawCombo();
+  
+  // Depth vignette
+  ctx.fillStyle = 'rgba(10,10,26,0)';
+  const vigGrad = ctx.createRadialGradient(W/2, H/2, H*0.3, W/2, H/2, H*0.7);
+  vigGrad.addColorStop(0, 'rgba(10,10,26,0)');
+  vigGrad.addColorStop(1, 'rgba(10,10,26,0.4)');
+  ctx.fillStyle = vigGrad;
+  ctx.fillRect(0, 0, W, H);
+  
+  ctx.restore();
+}
+
+function gameLoop() {
+  if (!gameRunning) return;
+  update();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('gameOver').style.display = 'none';
+  init();
+  gameRunning = true;
+  gameLoop();
+}
+
+// Controls
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+});
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  touchX = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  touchX = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+});
+canvas.addEventListener('touchend', () => touchX = null);
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('restartBtn').addEventListener('click', startGame);
+</script>
+</body>
+</html>
